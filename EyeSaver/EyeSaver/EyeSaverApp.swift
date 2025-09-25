@@ -19,16 +19,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var isPreviewingOpacity = false
     private var settings: EyeSaverSettings!
     private var cancellables = Set<AnyCancellable>()
+    private var preferencesWindow: NSWindow?
     
     func applicationWillFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        // Activation policy will be set after settings are loaded
     }
-    
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
 
+    func applicationDidFinishLaunching(_ notification: Notification) {
         settings = EyeSaverSettings()
         settings.appDelegate = self
+
+        // Set activation policy based on menubar visibility
+        updateActivationPolicy()
 
         print("EyeSaver: Application launched")
         print("EyeSaver: Interval between shows: \(settings.intervalBetweenShows) seconds")
@@ -78,14 +80,41 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func setupStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-
-        if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "eyes", accessibilityDescription: "EyeSaver")
-            button.image?.isTemplate = true
+        if settings.showInMenubar {
+            showStatusItem()
+        } else {
+            hideStatusItem()
         }
+    }
 
-        setupSwiftUIMenu()
+    private func showStatusItem() {
+        if statusItem == nil {
+            statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+
+            if let button = statusItem?.button {
+                button.image = NSImage(systemSymbolName: "eyes", accessibilityDescription: "EyeSaver")
+                button.image?.isTemplate = true
+            }
+
+            setupSwiftUIMenu()
+        }
+    }
+
+    private func hideStatusItem() {
+        if let statusItem = statusItem {
+            NSStatusBar.system.removeStatusItem(statusItem)
+            self.statusItem = nil
+        }
+    }
+
+    private func updateActivationPolicy() {
+        if settings.showInMenubar {
+            // Show in menubar: use accessory mode (doesn't appear in Cmd+Tab)
+            NSApp.setActivationPolicy(.accessory)
+        } else {
+            // Hidden from menubar: use regular mode (appears in Cmd+Tab)
+            NSApp.setActivationPolicy(.regular)
+        }
     }
 
     private func setupSwiftUIMenu() {
@@ -100,44 +129,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // Add SwiftUI sliders as hosting views
-        addSliderMenuItem(to: menu, title: "Interval",
-            value: settings.intervalBetweenShows / 60,
-            range: 5...60,
-            step: 5,
-            formatter: { "\(Int($0)) min" },
-            onChange: { [weak self] value in
-                self?.settings.intervalBetweenShows = value * 60
-            })
-
-        addSliderMenuItem(to: menu, title: "Duration",
-            value: settings.displayDuration,
-            range: 1...min(settings.intervalBetweenShows, 300),
-            step: 1,
-            formatter: { "\(Int($0))s" },
-            onChange: { [weak self] value in
-                self?.settings.displayDuration = value
-            })
-
-        addSliderMenuItem(to: menu, title: "Fade In",
-            value: settings.fadeInDuration,
-            range: 0...5,
-            step: 0.1,
-            formatter: { String(format: "%.1fs", $0) },
-            onChange: { [weak self] value in
-                self?.settings.fadeInDuration = value
-            })
-
-        addSliderMenuItem(to: menu, title: "Fade Out",
-            value: settings.fadeOutDuration,
-            range: 0...5,
-            step: 0.1,
-            formatter: { String(format: "%.1fs", $0) },
-            onChange: { [weak self] value in
-                self?.settings.fadeOutDuration = value
-            })
-
-        addOpacitySliderMenuItem(to: menu)
+        // Preferences option
+        let preferencesItem = NSMenuItem(title: "Preferences...", action: #selector(showPreferences), keyEquivalent: ",")
+        preferencesItem.target = self
+        menu.addItem(preferencesItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -149,36 +144,29 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem?.menu = menu
     }
 
-    private func addSliderMenuItem(to menu: NSMenu, title: String, value: Double, range: ClosedRange<Double>, step: Double, formatter: @escaping (Double) -> String, onChange: @escaping (Double) -> Void) {
-        let sliderView = SliderView(title: title, value: value, range: range, step: step, formatter: formatter, onChange: onChange)
-        let hostingView = NSHostingView(rootView: sliderView)
-        hostingView.frame = NSRect(x: 0, y: 0, width: 300, height: 60)
+    @objc private func showPreferences() {
+        if let existingWindow = preferencesWindow, existingWindow.isVisible {
+            // Window already exists and is visible, just bring it to front
+            existingWindow.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return
+        }
 
-        let menuItem = NSMenuItem()
-        menuItem.view = hostingView
-        menu.addItem(menuItem)
-    }
+        // Create new window or show existing hidden window
+        if preferencesWindow == nil {
+            let contentView = PreferencesWindow(settings: settings)
+            let hostingController = NSHostingController(rootView: contentView)
 
-    private func addOpacitySliderMenuItem(to menu: NSMenu) {
-        let sliderView = OpacitySliderView(
-            title: "Opacity",
-            value: settings.overlayOpacity,
-            onChange: { [weak self] value in
-                self?.settings.overlayOpacity = value
-            },
-            onPreviewStart: { [weak self] in
-                self?.startOpacityPreview()
-            },
-            onPreviewEnd: { [weak self] in
-                self?.endOpacityPreview()
-            }
-        )
-        let hostingView = NSHostingView(rootView: sliderView)
-        hostingView.frame = NSRect(x: 0, y: 0, width: 300, height: 60)
+            preferencesWindow = NSWindow(contentViewController: hostingController)
+            preferencesWindow?.title = "EyeSaver Preferences"
+            preferencesWindow?.styleMask = [.titled, .closable, .miniaturizable]
+            preferencesWindow?.isReleasedWhenClosed = false
+            preferencesWindow?.center()
+            preferencesWindow?.setFrameAutosaveName("PreferencesWindow")
+        }
 
-        let menuItem = NSMenuItem()
-        menuItem.view = hostingView
-        menu.addItem(menuItem)
+        preferencesWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     @objc private func toggleEnabled() {
@@ -210,6 +198,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settings.$intervalBetweenShows
             .sink { [weak self] _ in
                 self?.restartTimer()
+            }
+            .store(in: &cancellables)
+
+        settings.$showInMenubar
+            .sink { [weak self] showInMenubar in
+                if showInMenubar {
+                    self?.showStatusItem()
+                } else {
+                    self?.hideStatusItem()
+                }
+                self?.updateActivationPolicy()
             }
             .store(in: &cancellables)
     }
@@ -290,6 +289,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func showOverlays() {
         guard settings.isEnabled && !isPreviewingOpacity else { return }
 
+        // Check if we should disable during screen sharing
+        if settings.disableWhileScreenSharing && settings.isScreenSharingActive() {
+            print("EyeSaver: Skipping overlay - screen sharing is active")
+            return
+        }
+
         print("EyeSaver: Showing overlays")
         fadeInOverlays()
 
@@ -334,6 +339,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        // If the menubar is hidden and the app is activated, show preferences
+        if !settings.showInMenubar {
+            showPreferences()
+        }
     }
 }
 

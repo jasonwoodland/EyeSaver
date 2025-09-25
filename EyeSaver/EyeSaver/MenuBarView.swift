@@ -30,8 +30,8 @@ struct SliderView: View {
 
             Slider(value: $value, in: range, step: step)
                 .padding(.horizontal, 12)
-                .onChange(of: value) { newValue in
-                    onChange(newValue)
+                .onChange(of: value) {
+                    onChange(value)
                 }
         }
         .padding(.vertical, 8)
@@ -74,8 +74,8 @@ struct OpacitySliderView: View {
                 }
             }
                 .padding(.horizontal, 12)
-                .onChange(of: value) { newValue in
-                    onChange(newValue)
+                .onChange(of: value) {
+                    onChange(value)
                     if !isPreviewActive {
                         isPreviewActive = true
                         onPreviewStart()

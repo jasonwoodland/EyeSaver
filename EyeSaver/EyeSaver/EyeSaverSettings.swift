@@ -7,6 +7,7 @@
 
 import SwiftUI
 import Combine
+import ServiceManagement
 
 class EyeSaverSettings: ObservableObject {
     @Published var isEnabled: Bool {
@@ -33,6 +34,21 @@ class EyeSaverSettings: ObservableObject {
         didSet { UserDefaults.standard.set(overlayOpacity, forKey: "EyeSaver.overlayOpacity") }
     }
 
+    @Published var launchAtLogin: Bool {
+        didSet {
+            UserDefaults.standard.set(launchAtLogin, forKey: "EyeSaver.launchAtLogin")
+            updateLaunchAtLogin()
+        }
+    }
+
+    @Published var disableWhileScreenSharing: Bool {
+        didSet { UserDefaults.standard.set(disableWhileScreenSharing, forKey: "EyeSaver.disableWhileScreenSharing") }
+    }
+
+    @Published var showInMenubar: Bool {
+        didSet { UserDefaults.standard.set(showInMenubar, forKey: "EyeSaver.showInMenubar") }
+    }
+
     weak var appDelegate: AppDelegate?
 
     init() {
@@ -52,6 +68,12 @@ class EyeSaverSettings: ObservableObject {
 
         let opacityValue = UserDefaults.standard.double(forKey: "EyeSaver.overlayOpacity")
         self.overlayOpacity = opacityValue > 0 ? opacityValue : 0.66
+
+        self.launchAtLogin = UserDefaults.standard.object(forKey: "EyeSaver.launchAtLogin") as? Bool ?? false
+
+        self.disableWhileScreenSharing = UserDefaults.standard.object(forKey: "EyeSaver.disableWhileScreenSharing") as? Bool ?? false
+
+        self.showInMenubar = UserDefaults.standard.object(forKey: "EyeSaver.showInMenubar") as? Bool ?? true
     }
 
     func startOpacityPreview() {
@@ -60,5 +82,38 @@ class EyeSaverSettings: ObservableObject {
 
     func endOpacityPreview() {
         appDelegate?.endOpacityPreview()
+    }
+
+    private func updateLaunchAtLogin() {
+        if launchAtLogin {
+            do {
+                try SMAppService.mainApp.register()
+            } catch {
+                print("Failed to enable launch at login: \(error)")
+            }
+        } else {
+            do {
+                try SMAppService.mainApp.unregister()
+            } catch {
+                print("Failed to disable launch at login: \(error)")
+            }
+        }
+    }
+
+    func isScreenSharingActive() -> Bool {
+        let windowList = CGWindowListCopyWindowInfo(.excludeDesktopElements, kCGNullWindowID) as? [[String: Any]] ?? []
+
+        for window in windowList {
+            if let owner = window[kCGWindowOwnerName as String] as? String,
+               let windowName = window[kCGWindowName as String] as? String {
+                if owner.contains("ScreenSearch") || owner.contains("screensharing") ||
+                   windowName.contains("Screen Sharing") || owner.contains("zoom") ||
+                   owner.contains("Zoom") || owner.contains("Discord") ||
+                   owner.contains("Skype") || owner.contains("Microsoft Teams") {
+                    return true
+                }
+            }
+        }
+        return false
     }
 }
