@@ -1,0 +1,82 @@
+{
+  "log": {
+    "loglevel": "verbose"
+  },
+  "inbounds": [
+    {
+      "port": 1080,
+      "protocol": "socks",
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls"]
+      },
+      "settings": {
+        "auth": "noauth",
+        "udp": true
+      }
+    },
+    {
+      "port": 1081,
+      "protocol": "http",
+      "sniffing": {
+        "enabled": true,
+        "destOverride": ["http", "tls"]
+      }
+    }
+  ],
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "23.106.140.210",
+            "port": 443,
+            "users": [
+              {
+                "id": "7aa74163-7147-4944-ab54-e772de9fe056",
+                "encryption": "none"
+              }
+            ]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "h2",
+        "security": "reality",
+        "httpSettings": {
+          "host": ["23.106.140.210"],
+          "path": "/6118bc73"
+        },
+        "realitySettings": {
+          "serverName": "ssl.gstatic.com",
+          "fingerprint": "chrome",
+          "publicKey": "m_uewNjHfGOBsynOxnZjH3FsvSu0LNJGAr2ZK5ebUUo",
+          "shortId": "f385d6c45e66b5bc"
+        }
+      }
+    },
+    {
+      "protocol": "freedom",
+      "tag": "direct"
+    },
+    {
+      "protocol": "blackhole",
+      "tag": "block"
+    }
+  ],
+  "routing": {
+    "rules": [
+      {
+        "type": "field",
+        "domain": ["geosite:cn"],
+        "outboundTag": "direct"
+      },
+      {
+        "type": "field",
+        "ip": ["geoip:cn", "geoip:private"],
+        "outboundTag": "direct"
+      }
+    ]
+  }
+}

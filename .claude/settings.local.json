@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xcodebuild:*)",
+      "Read(/private/var/log/**)",
+      "Bash(pkill:*)",
+      "Bash(open /Users/jason/Library/Developer/Xcode/DerivedData/EyeSaver-eszsgyxjhpskbjafcsislflgunzr/Build/Products/Debug/EyeSaver.app)",
+      "Bash(ping:*)",
+      "Bash(nslookup:*)",
+      "Bash(arp:*)",
+      "Bash(/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -I)",
+      "Bash(/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport -s)",
+      "Bash(system_profiler:*)",
+      "Bash(netstat:*)",
+      "Read(//private/var/tmp/WiFiDiagnostics_2025-09-10_10.18.32.511_macOS_MacBookPro18,3_25A5351b/**)",
+      "Read(//var/tmp/WiFiDiagnostics_2025-09-10_10.18.32.511_macOS_MacBookPro18,3_25A5351b/**)",
+      "Bash(ssh:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

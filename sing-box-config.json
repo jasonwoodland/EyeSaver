@@ -1,0 +1,68 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "dns": {
+    "servers": [
+      {
+        "type": "https",
+        "tag": "",
+        "server": "1.1.1.1",
+        "server_port": 443,
+        "path": "/dns-query"
+      }
+    ],
+    "final": "",
+    "strategy": "ipv4_only"
+  },
+  "inbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "listen": "0.0.0.0",
+      "listen_port": 1080
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "vless-out",
+      "server": "23.106.140.210",
+      "server_port": 443,
+      "uuid": "7aa74163-7147-4944-ab54-e772de9fe056",
+      "network": "udp",
+      "transport": {
+        "type": "http",
+        "host": "23.106.140.210",
+        "path": "/6118bc73",
+        "headers": {
+          "Host": ["23.106.140.210"]
+        }
+      },
+      "tls": {
+        "enabled": true,
+        "server_name": "ssl.gstatic.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "m_uewNjHfGOBsynOxnZjH3FsvSu0LNJGAr2ZK5ebUUo",
+          "short_id": "f385d6c45e66b5bc"
+        }
+      }
+    }
+  ],
+  "route": {
+    "final": "vless-out",
+    "auto_detect_interface": true
+  },
+  "experimental": {
+    "cache_file": {
+      "enabled": true,
+      "path": "/etc/sing-box/cache.db"
+    }
+  }
+}
