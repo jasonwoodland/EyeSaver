@@ -8,288 +8,305 @@
 import SwiftUI
 import Combine
 
+enum PreferenceCategory: String, CaseIterable, Identifiable {
+    case general = "General"
+    case schedule = "Schedule"
+    case appearance = "Appearance"
+    case about = "About"
+
+    var id: String { rawValue }
+
+    var icon: String {
+        switch self {
+        case .general: return "gearshape"
+        case .schedule: return "clock"
+        case .appearance: return "paintbrush"
+        case .about: return "info.circle"
+        }
+    }
+}
+
 struct PreferencesWindow: View {
     @ObservedObject var settings: EyeSaverSettings
-    @Environment(\.dismiss) private var dismiss
+    @State private var selectedCategory: PreferenceCategory = .general
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack {
-                Image(systemName: "eyes.inverse")
-                    .foregroundColor(.blue)
-                    .font(.title)
-                Text("EyeSaver Preferences")
-                    .font(.title2)
-                    .fontWeight(.medium)
-                Spacer()
-                Button("Done") {
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-            }
-            .padding()
-            .background(.regularMaterial)
-
-            ScrollView {
-                VStack(spacing: 24) {
-                    // General Settings
-                    PreferencesSection(title: "General", icon: "gearshape") {
-                        VStack(spacing: 16) {
-                            PreferencesToggle(
-                                title: "Enable EyeSaver",
-                                subtitle: "Automatically show rest reminders",
-                                isOn: $settings.isEnabled
-                            )
-
-                            PreferencesToggle(
-                                title: "Launch at Login",
-                                subtitle: "Start EyeSaver when you log in",
-                                isOn: $settings.launchAtLogin
-                            )
-
-                            PreferencesToggle(
-                                title: "Disable While Screen Sharing",
-                                subtitle: "Pause reminders when sharing your screen",
-                                isOn: $settings.disableWhileScreenSharing
-                            )
-
-                            PreferencesToggle(
-                                title: "Show in Menubar",
-                                subtitle: "Display EyeSaver icon in the menu bar",
-                                isOn: $settings.showInMenubar
-                            )
-                        }
-                    }
-
-                    // Timing Settings
-                    PreferencesSection(title: "Timing", icon: "clock") {
-                        VStack(spacing: 16) {
-                            PreferencesSlider(
-                                title: "Interval Between Reminders",
-                                subtitle: "How often to show rest reminders",
-                                value: Binding(
-                                    get: { settings.intervalBetweenShows / 60 },
-                                    set: { settings.intervalBetweenShows = $0 * 60 }
-                                ),
-                                range: 5...60,
-                                step: 5,
-                                unit: "min"
-                            )
-
-                            PreferencesSlider(
-                                title: "Display Duration",
-                                subtitle: "How long to show each reminder",
-                                value: $settings.displayDuration,
-                                range: 1...min(settings.intervalBetweenShows, 300),
-                                step: 1,
-                                unit: "sec"
-                            )
-                        }
-                    }
-
-                    // Animation Settings
-                    PreferencesSection(title: "Animation", icon: "wand.and.stars") {
-                        VStack(spacing: 16) {
-                            PreferencesSlider(
-                                title: "Fade In Duration",
-                                subtitle: "Time to fade in the overlay",
-                                value: $settings.fadeInDuration,
-                                range: 0...5,
-                                step: 0.1,
-                                unit: "sec",
-                                precision: 1
-                            )
-
-                            PreferencesSlider(
-                                title: "Fade Out Duration",
-                                subtitle: "Time to fade out the overlay",
-                                value: $settings.fadeOutDuration,
-                                range: 0...5,
-                                step: 0.1,
-                                unit: "sec",
-                                precision: 1
-                            )
-                        }
-                    }
-
-                    // Appearance Settings
-                    PreferencesSection(title: "Appearance", icon: "paintbrush") {
-                        PreferencesOpacitySlider(
-                            title: "Overlay Opacity",
-                            subtitle: "Darkness of the screen overlay",
-                            value: $settings.overlayOpacity,
-                            onPreviewStart: { settings.startOpacityPreview() },
-                            onPreviewEnd: { settings.endOpacityPreview() }
-                        )
-                    }
-                }
-                .padding()
-            }
-        }
-        .frame(width: 500, height: 600)
-        .background(.regularMaterial)
-    }
-}
-
-struct PreferencesSection<Content: View>: View {
-    let title: String
-    let icon: String
-    let content: Content
-
-    init(title: String, icon: String, @ViewBuilder content: () -> Content) {
-        self.title = title
-        self.icon = icon
-        self.content = content()
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Image(systemName: icon)
-                    .foregroundColor(.blue)
-                    .frame(width: 16)
-                Text(title)
-                    .font(.headline)
-                    .fontWeight(.semibold)
-                Spacer()
-            }
-
+        NavigationSplitView {
+            // Sidebar - extends behind titlebar in Tahoe design
             VStack(spacing: 0) {
-                content
-            }
-            .padding()
-            .background(.thickMaterial, in: RoundedRectangle(cornerRadius: 12))
-        }
-    }
-}
-
-struct PreferencesToggle: View {
-    let title: String
-    let subtitle: String
-    @Binding var isOn: Bool
-
-    var body: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.body)
-                    .fontWeight(.medium)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-            Spacer()
-            Toggle("", isOn: $isOn)
-                .toggleStyle(.switch)
-        }
-    }
-}
-
-struct PreferencesSlider: View {
-    let title: String
-    let subtitle: String
-    @Binding var value: Double
-    let range: ClosedRange<Double>
-    let step: Double
-    let unit: String
-    let precision: Int
-
-    init(title: String, subtitle: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double, unit: String, precision: Int = 0) {
-        self.title = title
-        self.subtitle = subtitle
-        self._value = value
-        self.range = range
-        self.step = step
-        self.unit = unit
-        self.precision = precision
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.body)
-                        .fontWeight(.medium)
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+                // Sidebar content with proper safe area handling
+                List(PreferenceCategory.allCases, selection: $selectedCategory) { category in
+                    HStack {
+                        Image(systemName: category.icon)
+                            .foregroundColor(.blue)
+                            .frame(width: 16)
+                        Text(category.rawValue)
+                    }
+                    .tag(category)
                 }
-                Spacer()
-                Text(formatValue(value))
-                    .font(.body)
-                    .fontWeight(.medium)
-                    .foregroundColor(.blue)
-            }
+                .listStyle(.sidebar)
+                .scrollContentBackground(.hidden)
+                .safeAreaInset(edge: .top) {
+                    // Spacer for titlebar area
+                    Rectangle()
+                        .fill(Color.clear)
+                        .frame(height: 0)
+                }
 
-            Slider(value: $value, in: range, step: step)
-                .tint(.blue)
+            }
+            .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 220)
+        } detail: {
+            // Detail view
+            Group {
+                switch selectedCategory {
+                case .general:
+                    GeneralPreferencesView(settings: settings)
+                case .schedule:
+                    SchedulePreferencesView(settings: settings)
+                case .appearance:
+                    AppearancePreferencesView(settings: settings)
+                case .about:
+                    AboutPreferencesView()
+                }
+            }
+            .navigationTitle("EyeSaver Preferences")
         }
+        .navigationSplitViewStyle(.balanced)
+        .frame(width: 700, height: 500)
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { _ in
+            // Handle window close cleanup if needed
+        }
+        .onAppear {
+            // Set up window-specific keyboard shortcuts
+            setupWindowCommands()
+        }
+        .background(
+            Button("", action: { NSApp.terminate(nil) })
+                .keyboardShortcut("q", modifiers: .command)
+                .hidden()
+        )
     }
 
-    private func formatValue(_ value: Double) -> String {
-        if precision > 0 {
-            return String(format: "%.\(precision)f %@", value, unit)
-        } else {
-            return "\(Int(value)) \(unit)"
-        }
+    private func setupWindowCommands() {
+        // Cmd+W will automatically work with the window's close button
+        // No additional setup needed as NSWindow handles this by default
     }
 }
 
-struct PreferencesOpacitySlider: View {
-    let title: String
-    let subtitle: String
-    @Binding var value: Double
-    let onPreviewStart: () -> Void
-    let onPreviewEnd: () -> Void
+// MARK: - General Preferences
+struct GeneralPreferencesView: View {
+    @ObservedObject var settings: EyeSaverSettings
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Enable", isOn: $settings.isEnabled)
+            } footer: {
+                Text("Enable EyeSaver reminders.")
+            }
+
+            Section {
+                Toggle("Launch at Login", isOn: $settings.launchAtLogin)
+                Toggle("Show in Menubar", isOn: $settings.showInMenubar)
+            } header: {
+                Text("Preferences")
+            }
+
+            Section {
+                Toggle("Disable While Screen Sharing", isOn: $settings.disableWhileScreenSharing)
+            } header: {
+                Text("Behaviour")
+            } footer: {
+                Text("Automatically pause reminders during presentations and video calls.")
+            }
+
+            Section {
+                Button("Quit EyeSaver") {
+                    NSApp.terminate(nil)
+                }
+                .foregroundColor(.red)
+            }
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+// MARK: - Schedule Preferences
+struct SchedulePreferencesView: View {
+    @ObservedObject var settings: EyeSaverSettings
+
+    var body: some View {
+        Form {
+            Section {
+                HStack {
+                    Text("Interval Between Reminders")
+                    Spacer()
+                    HStack {
+                        Slider(
+                            value: Binding(
+                                get: { settings.intervalBetweenShows / 60 },
+                                set: { settings.intervalBetweenShows = $0 * 60 }
+                            ),
+                            in: 5...60
+                        )
+                        .controlSize(.small)
+                        Text("\(Int(settings.intervalBetweenShows / 60)) min")
+                            .foregroundColor(.secondary)
+                            .frame(minWidth: 50, alignment: .trailing)
+                    }
+                    .frame(width: 250)
+                }
+
+                HStack {
+                    Text("Display Duration")
+                    Spacer()
+                    HStack {
+                        Slider(
+                            value: $settings.displayDuration,
+                            in: 1...min(settings.intervalBetweenShows, 300)
+                        )
+                        .controlSize(.small)
+                        Text("\(Int(settings.displayDuration)) sec")
+                            .foregroundColor(.secondary)
+                            .frame(minWidth: 50, alignment: .trailing)
+                    }
+                    .frame(width: 250)
+                }
+            } header: {
+                Text("Timing")
+            } footer: {
+                Text("Control how often reminders appear and how long they stay visible.")
+            }
+
+            Section {
+                HStack {
+                    Text("Fade Duration")
+                    Spacer()
+                    HStack {
+                        Slider(
+                            value: $settings.fadeDuration,
+                            in: 0...5
+                        )
+                        .controlSize(.small)
+                        Text(String(format: "%.1f sec", settings.fadeDuration))
+                            .foregroundColor(.secondary)
+                            .frame(minWidth: 60, alignment: .trailing)
+                    }
+                    .frame(width: 250)
+                }
+            } header: {
+                Text("Animation")
+            } footer: {
+                Text("Adjust the fade animation timing for overlay transitions.")
+            }
+        }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+// MARK: - Appearance Preferences
+struct AppearancePreferencesView: View {
+    @ObservedObject var settings: EyeSaverSettings
     @State private var isPreviewActive = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.body)
-                        .fontWeight(.medium)
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-                Text("\(Int(value * 100))%")
-                    .font(.body)
-                    .fontWeight(.medium)
-                    .foregroundColor(.blue)
-            }
-
-            Slider(value: $value, in: 0...1, step: 0.01) { editing in
-                if editing {
-                    if !isPreviewActive {
-                        isPreviewActive = true
-                        onPreviewStart()
+        Form {
+            Section {
+                HStack {
+                    Text("Dimming Amount")
+                    Spacer()
+                    HStack {
+                        Slider(
+                            value: $settings.overlayOpacity,
+                            in: 0...1
+                        ) { editing in
+                            if editing {
+                                if !isPreviewActive {
+                                    isPreviewActive = true
+                                    settings.startOpacityPreview()
+                                }
+                            } else {
+                                if isPreviewActive {
+                                    isPreviewActive = false
+                                    settings.endOpacityPreview()
+                                }
+                            }
+                        }
+                        .controlSize(.small)
+                        .onChange(of: settings.overlayOpacity) {
+                            if !isPreviewActive {
+                                isPreviewActive = true
+                                settings.startOpacityPreview()
+                            }
+                        }
+                        Text("\(Int(settings.overlayOpacity * 100))%")
+                            .foregroundColor(.secondary)
+                            .frame(minWidth: 50, alignment: .trailing)
                     }
-                } else {
-                    if isPreviewActive {
-                        isPreviewActive = false
-                        onPreviewEnd()
-                    }
+                    .frame(width: 250)
                 }
-            }
-            .tint(.blue)
-            .onChange(of: value) {
-                if !isPreviewActive {
-                    isPreviewActive = true
-                    onPreviewStart()
-                }
+            } header: {
+                Text("Screen Overlay")
+            } footer: {
+                Text("Adjust the amount of screen dimming while showing a reminder. Drag the slider to preview.")
             }
         }
+        .formStyle(.grouped)
+        .scrollContentBackground(.hidden)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onDisappear {
             if isPreviewActive {
                 isPreviewActive = false
-                onPreviewEnd()
+                settings.endOpacityPreview()
             }
         }
+    }
+}
+
+// MARK: - About Preferences
+struct AboutPreferencesView: View {
+    var body: some View {
+        VStack(spacing: 32) {
+            Spacer()
+
+            VStack(spacing: 20) {
+                // App Icon and Name
+                VStack(spacing: 12) {
+                    Image(systemName: "eyes")
+                        .font(.system(size: 48))
+
+                    Text("EyeSaver")
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                }
+
+                // Description
+                Text("A small, unobtrusive utility for macOS that gently reminds you to rest your eyes, based on the 20-20-20 rule.")
+                    .font(.body)
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: 400)
+
+                // Developer Info
+                VStack {
+                    Text("By Jason Woodland")
+                        .font(.headline)
+                        .fontWeight(.medium)
+
+                    Link("https://jasonwoodland.com/eyesaver", destination: URL(string: "https://jasonwoodland.com/eyesaver")!)
+                        .font(.body)
+                        .foregroundColor(.blue)
+                }
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(.regularMaterial)
     }
 }
 

@@ -22,12 +22,8 @@ class EyeSaverSettings: ObservableObject {
         didSet { UserDefaults.standard.set(displayDuration, forKey: "EyeSaver.displayDuration") }
     }
 
-    @Published var fadeInDuration: TimeInterval {
-        didSet { UserDefaults.standard.set(fadeInDuration, forKey: "EyeSaver.fadeInDuration") }
-    }
-
-    @Published var fadeOutDuration: TimeInterval {
-        didSet { UserDefaults.standard.set(fadeOutDuration, forKey: "EyeSaver.fadeOutDuration") }
+    @Published var fadeDuration: TimeInterval {
+        didSet { UserDefaults.standard.set(fadeDuration, forKey: "EyeSaver.fadeDuration") }
     }
 
     @Published var overlayOpacity: Double {
@@ -60,11 +56,8 @@ class EyeSaverSettings: ObservableObject {
         let durationValue = UserDefaults.standard.double(forKey: "EyeSaver.displayDuration")
         self.displayDuration = durationValue > 0 ? durationValue : 20.0
 
-        let fadeInValue = UserDefaults.standard.double(forKey: "EyeSaver.fadeInDuration")
-        self.fadeInDuration = fadeInValue > 0 ? fadeInValue : 2.0
-
-        let fadeOutValue = UserDefaults.standard.double(forKey: "EyeSaver.fadeOutDuration")
-        self.fadeOutDuration = fadeOutValue > 0 ? fadeOutValue : 2.0
+        let fadeValue = UserDefaults.standard.double(forKey: "EyeSaver.fadeDuration")
+        self.fadeDuration = fadeValue > 0 ? fadeValue : 2.0
 
         let opacityValue = UserDefaults.standard.double(forKey: "EyeSaver.overlayOpacity")
         self.overlayOpacity = opacityValue > 0 ? opacityValue : 0.66

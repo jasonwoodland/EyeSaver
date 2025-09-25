@@ -39,6 +39,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         setupStatusItem()
         createOverlayWindows()
         setupSettingsObservers()
+        setupSystemEventObservers()
 
         if settings.isEnabled {
             startIntervalTimer()
@@ -90,13 +91,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func showStatusItem() {
         if statusItem == nil {
             statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-
-            if let button = statusItem?.button {
-                button.image = NSImage(systemSymbolName: "eyes", accessibilityDescription: "EyeSaver")
-                button.image?.isTemplate = true
-            }
-
             setupSwiftUIMenu()
+        }
+        updateStatusItemIcon()
+    }
+
+    private func updateStatusItemIcon() {
+        if let button = statusItem?.button {
+            let iconName = settings.isEnabled ? "eyes" : "eyes.inverse"
+            button.image = NSImage(systemSymbolName: iconName, accessibilityDescription: "EyeSaver")
+            button.image?.isTemplate = true
         }
     }
 
@@ -109,11 +113,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateActivationPolicy() {
         if settings.showInMenubar {
-            // Show in menubar: use accessory mode (doesn't appear in Cmd+Tab)
+            // Show in menubar: use accessory mode (doesn't appear in Cmd+Tab or Dock)
             NSApp.setActivationPolicy(.accessory)
         } else {
-            // Hidden from menubar: use regular mode (appears in Cmd+Tab)
-            NSApp.setActivationPolicy(.regular)
+            // Hidden from menubar: use prohibited mode (appears in Cmd+Tab but not Dock)
+            NSApp.setActivationPolicy(.prohibited)
         }
     }
 
@@ -144,9 +148,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem?.menu = menu
     }
 
+    private func refreshMenuItems() {
+        guard let menu = statusItem?.menu else { return }
+
+        // Update the enabled menu item state
+        for item in menu.items {
+            if item.title == "Enabled" {
+                item.state = settings.isEnabled ? .on : .off
+                break
+            }
+        }
+
+        // Update the icon
+        updateStatusItemIcon()
+    }
+
     @objc private func showPreferences() {
-        if let existingWindow = preferencesWindow, existingWindow.isVisible {
-            // Window already exists and is visible, just bring it to front
+        if let existingWindow = preferencesWindow {
+            // Window exists, always bring it to front and focus
             existingWindow.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
@@ -159,10 +178,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
             preferencesWindow = NSWindow(contentViewController: hostingController)
             preferencesWindow?.title = "EyeSaver Preferences"
-            preferencesWindow?.styleMask = [.titled, .closable, .miniaturizable]
+            preferencesWindow?.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+            preferencesWindow?.titlebarAppearsTransparent = true
+
+            // Enable sidebar tracking separator for Tahoe design
+            let toolbar = NSToolbar(identifier: "PreferencesToolbar")
+            toolbar.displayMode = .iconOnly
+            preferencesWindow?.toolbar = toolbar
+            preferencesWindow?.toolbarStyle = .unified
+
             preferencesWindow?.isReleasedWhenClosed = false
             preferencesWindow?.center()
             preferencesWindow?.setFrameAutosaveName("PreferencesWindow")
+
+            // Ensure standard window commands work (Cmd+W, etc.)
+            preferencesWindow?.standardWindowButton(.closeButton)?.keyEquivalent = "w"
+            preferencesWindow?.standardWindowButton(.closeButton)?.keyEquivalentModifierMask = .command
         }
 
         preferencesWindow?.makeKeyAndOrderFront(nil)
@@ -171,7 +202,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func toggleEnabled() {
         settings.isEnabled.toggle()
-        setupSwiftUIMenu() // Refresh menu
+        refreshMenuItems()
     }
 
     @objc private func quit() {
@@ -185,6 +216,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self?.startIntervalTimer()
                 } else {
                     self?.stopIntervalTimer()
+                }
+
+                // Update menubar item state and icon when setting changes
+                DispatchQueue.main.async {
+                    self?.refreshMenuItems()
                 }
             }
             .store(in: &cancellables)
@@ -312,9 +348,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = settings.fadeInDuration
+            context.duration = settings.fadeDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-            
+
             for window in overlayWindows {
                 window.animator().alphaValue = 1.0
             }
@@ -326,7 +362,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func fadeOutOverlays() {
         print("Starting fade out animation")
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = settings.fadeOutDuration
+            context.duration = settings.fadeDuration
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
 
             for window in overlayWindows {
@@ -346,6 +382,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if !settings.showInMenubar {
             showPreferences()
         }
+    }
+
+    private func setupSystemEventObservers() {
+        // Listen for screen wake/unlock events
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(systemDidWake),
+            name: NSWorkspace.didWakeNotification,
+            object: nil
+        )
+
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(screenDidUnlock),
+            name: NSWorkspace.sessionDidBecomeActiveNotification,
+            object: nil
+        )
+    }
+
+    @objc private func systemDidWake() {
+        print("EyeSaver: System woke from sleep - resetting timer")
+        restartTimer()
+    }
+
+    @objc private func screenDidUnlock() {
+        print("EyeSaver: Screen unlocked - resetting timer")
+        restartTimer()
     }
 }
 
