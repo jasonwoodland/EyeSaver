@@ -58,16 +58,16 @@ class EyeSaverSettings: ObservableObject {
         self.isEnabled = UserDefaults.standard.object(forKey: "EyeSaver.enabled") as? Bool ?? true
 
         let intervalValue = UserDefaults.standard.double(forKey: "EyeSaver.intervalBetweenShows")
-        self.intervalBetweenShows = intervalValue > 0 ? intervalValue : 300.0
+        self.intervalBetweenShows = intervalValue > 0 ? intervalValue : 1200.0  // 20 minutes
 
         let durationValue = UserDefaults.standard.double(forKey: "EyeSaver.displayDuration")
-        self.displayDuration = durationValue > 0 ? durationValue : 20.0
+        self.displayDuration = durationValue > 0 ? durationValue : 20.0  // 20 seconds
 
         let fadeValue = UserDefaults.standard.double(forKey: "EyeSaver.fadeDuration")
-        self.fadeDuration = fadeValue > 0 ? fadeValue : 2.0
+        self.fadeDuration = fadeValue > 0 ? fadeValue : 2.5  // 2.5 seconds
 
         let opacityValue = UserDefaults.standard.double(forKey: "EyeSaver.overlayOpacity")
-        self.overlayOpacity = opacityValue > 0 ? opacityValue : 0.66
+        self.overlayOpacity = opacityValue > 0 ? opacityValue : 0.5  // 50% opacity
 
         self.launchAtLogin = UserDefaults.standard.object(forKey: "EyeSaver.launchAtLogin") as? Bool ?? false
 
