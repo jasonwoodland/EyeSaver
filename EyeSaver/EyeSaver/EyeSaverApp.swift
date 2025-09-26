@@ -117,13 +117,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
             // Right-click: toggle enabled
             settings.isEnabled.toggle()
         } else {
-            // Left-click: end break if active, otherwise show menu
-            if isBreakActive {
-                endBreakImmediately()
-            } else {
-                guard let menu = statusItemMenu else { return }
-                menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height), in: sender)
-            }
+            // Left-click: always show menu
+            guard let menu = statusItemMenu else { return }
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height), in: sender)
         }
     }
 
@@ -167,8 +163,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
         // Enable/Disable toggle
         let enabledItem = NSMenuItem(title: "Enabled", action: #selector(toggleEnabled), keyEquivalent: "")
         enabledItem.target = self
+        enabledItem.tag = 1  // Tag for identifying this item
         enabledItem.state = settings.isEnabled ? .on : .off
         menu.addItem(enabledItem)
+
+        // Dismiss Break option (only visible during breaks)
+        let dismissBreakItem = NSMenuItem(title: "Dismiss Break", action: #selector(dismissBreak), keyEquivalent: "d")
+        dismissBreakItem.target = self
+        dismissBreakItem.tag = 2  // Tag for identifying this item
+        dismissBreakItem.isHidden = !isBreakActive
+        menu.addItem(dismissBreakItem)
 
         // Countdown display with fixed-width font
         countdownMenuItem = NSMenuItem(title: "Next break in: --:--", action: nil, keyEquivalent: "")
@@ -211,11 +215,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
     private func refreshMenuItems() {
         guard let menu = statusItemMenu else { return }
 
-        // Update the enabled menu item state
+        // Update the enabled menu item state and dismiss break visibility
         for item in menu.items {
-            if item.title == "Enabled" {
+            if item.tag == 1 {  // Enabled item
                 item.state = settings.isEnabled ? .on : .off
-                break
+            } else if item.tag == 2 {  // Dismiss Break item
+                item.isHidden = !isBreakActive
             }
         }
 
@@ -268,6 +273,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
         refreshMenuItems()
     }
 
+    @objc private func dismissBreak() {
+        dismissBreakEarly()
+    }
+
     @objc private func quit() {
         NSApp.terminate(nil)
     }
@@ -281,7 +290,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
                     self?.stopIntervalTimer()
                     // End any active break immediately
                     if self?.isBreakActive == true {
-                        self?.endBreakImmediately()
+                        self?.dismissBreakEarly()
                     }
                 }
 
@@ -409,9 +418,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
     private func startIntervalTimer() {
         print("EyeSaver: Starting interval timer")
         intervalStartTime = Date()
-        intervalTimer = Timer.scheduledTimer(withTimeInterval: settings.intervalBetweenShows, repeats: true) { [weak self] _ in
+        intervalTimer = Timer.scheduledTimer(withTimeInterval: settings.intervalBetweenShows, repeats: false) { [weak self] _ in
             self?.showOverlays()
-            self?.intervalStartTime = Date() // Reset start time for next interval
         }
     }
 
@@ -428,6 +436,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
         isBreakActive = true
         breakStartTime = Date()
         fadeInOverlays()
+
+        // Update menu to show Dismiss Break option
+        refreshMenuItems()
 
         fadeOutTimer?.invalidate()
         fadeOutTimer = Timer.scheduledTimer(withTimeInterval: settings.displayDuration, repeats: false) { [weak self] _ in
@@ -468,8 +479,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
             print("Fade out complete")
             self?.isBreakActive = false
             self?.breakStartTime = nil
-            // Restart timer for next interval
-            self?.intervalStartTime = Date()
+            // Update menu to hide Dismiss Break option
+            self?.refreshMenuItems()
+            // Schedule next break after the interval
+            if self?.settings.isEnabled == true {
+                self?.startIntervalTimer()
+            }
         })
     }
     
@@ -551,21 +566,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
         countdownMenuItem?.attributedTitle = attributedTitle
     }
 
-    private func endBreakImmediately() {
-        print("EyeSaver: Ending break immediately")
+    private func dismissBreakEarly() {
+        print("EyeSaver: Ending break via dismiss")
+        // Cancel the scheduled fade out timer
         fadeOutTimer?.invalidate()
         fadeOutTimer = nil
-        isBreakActive = false
-        breakStartTime = nil
 
-
-        // Immediately hide all overlays
-        for window in overlayWindows {
-            window.alphaValue = 0.0
-        }
-
-        // Reset interval timer
-        intervalStartTime = Date()
+        // Fade out the overlays (this handles everything else)
+        fadeOutOverlays()
     }
 
 
@@ -577,7 +585,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
         // Cancel current break if active
         if isBreakActive {
             print("EyeSaver: Canceling active break due to screen recording")
-            endBreakImmediately()
+            dismissBreakEarly()
         }
 
         // Update UI to reflect screen recording state
