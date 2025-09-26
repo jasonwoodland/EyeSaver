@@ -104,8 +104,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
 
     private func updateStatusItemIcon() {
         if let button = statusItem?.button {
-            let isEffectivelyEnabled = settings.isEnabled && !(settings.disableWhileScreenSharing && settings.isScreenSharingActive())
-            let iconName = isEffectivelyEnabled ? "EyeOpen" : "EyeClosed"
+            let iconName: String
+            if isBreakActive {
+                // During break, show closed eye (rest your eyes)
+                iconName = "EyeClosed"
+            } else {
+                // When not on break, show open eye if enabled, closed if disabled
+                let isEffectivelyEnabled = settings.isEnabled && !(settings.disableWhileScreenSharing && settings.isScreenSharingActive())
+                iconName = isEffectivelyEnabled ? "EyeOpen" : "EyeClosed"
+            }
             button.image = NSImage(named: iconName)
             button.image?.isTemplate = true
         }
