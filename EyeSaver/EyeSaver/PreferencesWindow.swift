@@ -276,8 +276,10 @@ struct AboutPreferencesView: View {
             VStack(spacing: 20) {
                 // App Icon and Name
                 VStack(spacing: 12) {
-                    Image(systemName: "eyes")
-                        .font(.system(size: 48))
+                    Image(nsImage: NSImage(named: "AppIcon") ?? NSImage())
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 128, height: 128)
 
                     Text("EyeSaver")
                         .font(.largeTitle)

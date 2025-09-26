@@ -105,8 +105,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
     private func updateStatusItemIcon() {
         if let button = statusItem?.button {
             let isEffectivelyEnabled = settings.isEnabled && !(settings.disableWhileScreenSharing && settings.isScreenSharingActive())
-            let iconName = isEffectivelyEnabled ? "eyes" : "eyes.inverse"
-            button.image = NSImage(systemSymbolName: iconName, accessibilityDescription: "EyeSaver")
+            let iconName = isEffectivelyEnabled ? "EyeOpen" : "EyeClosed"
+            button.image = NSImage(named: iconName)
             button.image?.isTemplate = true
         }
     }
@@ -117,9 +117,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
             // Right-click: toggle enabled
             settings.isEnabled.toggle()
         } else {
-            // Left-click: always show menu
-            guard let menu = statusItemMenu else { return }
-            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height), in: sender)
+            // Left-click: show menu by temporarily attaching it to the status item
+            statusItem?.menu = statusItemMenu
+            statusItem?.button?.performClick(nil)
+            // Menu will be detached in NSMenuDelegate's menuDidClose
         }
     }
 
@@ -398,6 +399,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
         // Stop countdown updates when menu closes
         countdownUpdateTimer?.invalidate()
         countdownUpdateTimer = nil
+
+        // Detach menu from status item to restore custom click handling
+        statusItem?.menu = nil
     }
 
     private func stopIntervalTimer() {
