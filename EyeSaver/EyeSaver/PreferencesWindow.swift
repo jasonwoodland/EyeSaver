@@ -287,7 +287,7 @@ struct AboutPreferencesView: View {
                 }
 
                 // Description
-                Text("A small, unobtrusive utility for macOS that gently reminds you to rest your eyes, based on the 20-20-20 rule.")
+                Text("A lightweight utility that gently reminds you to rest your eyes following the 20-20-20 rule.")
                     .font(.body)
                     .multilineTextAlignment(.center)
                     .foregroundColor(.secondary)

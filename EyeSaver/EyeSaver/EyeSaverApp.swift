@@ -350,8 +350,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
         // Make sure windows are visible and on top
         for window in overlayWindows {
             window.orderFrontRegardless()
-            window.alphaValue = 1.0
+            // Start with alpha 0 for fade in effect
+            window.alphaValue = 0.0
         }
+
+        // Fade in the preview
+        self.perform(#selector(performOpacityPreviewFadeIn), with: nil, afterDelay: 0, inModes: [.common])
+    }
+
+    @objc private func performOpacityPreviewFadeIn() {
+        NSAnimationContext.runAnimationGroup({ [weak self] context in
+            guard let self = self else { return }
+            context.duration = 0.3  // Slightly faster fade for preview
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+
+            for window in self.overlayWindows {
+                window.animator().alphaValue = 1.0
+            }
+        }, completionHandler: {
+            print("EyeSaver: Preview fade in completed")
+        })
     }
 
     func endOpacityPreview() {
@@ -363,12 +381,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
         print("EyeSaver: Actually ending opacity preview")
         isPreviewingOpacity = false
 
-        // Fade out the preview
-        NSAnimationContext.runAnimationGroup({ context in
+        // Use perform selector to ensure animation runs even when menu is closing
+        self.perform(#selector(performOpacityPreviewFadeOut), with: nil, afterDelay: 0, inModes: [.common])
+    }
+
+    @objc private func performOpacityPreviewFadeOut() {
+        NSAnimationContext.runAnimationGroup({ [weak self] context in
+            guard let self = self else { return }
             context.duration = 0.5
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
 
-            for window in overlayWindows {
+            for window in self.overlayWindows {
                 print("EyeSaver: Fading out window alpha from \(window.alphaValue) to 0.0")
                 window.animator().alphaValue = 0.0
             }
@@ -422,9 +445,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
     private func startIntervalTimer() {
         print("EyeSaver: Starting interval timer")
         intervalStartTime = Date()
-        intervalTimer = Timer.scheduledTimer(withTimeInterval: settings.intervalBetweenShows, repeats: false) { [weak self] _ in
+        intervalTimer = Timer(timeInterval: settings.intervalBetweenShows, repeats: false) { [weak self] _ in
             self?.showOverlays()
         }
+        // Add timer to run loop with .common mode so it fires even when menu is open
+        RunLoop.main.add(intervalTimer!, forMode: .common)
     }
 
     private func showOverlays() {
@@ -445,24 +470,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
         refreshMenuItems()
 
         fadeOutTimer?.invalidate()
-        fadeOutTimer = Timer.scheduledTimer(withTimeInterval: settings.displayDuration, repeats: false) { [weak self] _ in
+        fadeOutTimer = Timer(timeInterval: settings.displayDuration, repeats: false) { [weak self] _ in
             self?.fadeOutOverlays()
         }
+        // Add timer to run loop with .common mode so it fires even when menu is open
+        RunLoop.main.add(fadeOutTimer!, forMode: .common)
 
     }
     
     private func fadeInOverlays() {
         print("Starting fade in animation")
-        
+
         for window in overlayWindows {
             window.orderFrontRegardless()
         }
-        
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = settings.fadeDuration
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
 
-            for window in overlayWindows {
+        // Use perform selector to ensure animation runs even when menu is open
+        self.perform(#selector(performFadeIn), with: nil, afterDelay: 0, inModes: [.common])
+    }
+
+    @objc private func performFadeIn() {
+        NSAnimationContext.runAnimationGroup({ [weak self] context in
+            guard let self = self else { return }
+            context.duration = self.settings.fadeDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.allowsImplicitAnimation = true
+
+            for window in self.overlayWindows {
                 window.animator().alphaValue = 1.0
             }
         }) {
@@ -472,22 +506,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
     
     private func fadeOutOverlays() {
         print("Starting fade out animation")
-        NSAnimationContext.runAnimationGroup({ context in
-            context.duration = settings.fadeDuration
-            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
 
-            for window in overlayWindows {
+        // Use perform selector to ensure animation runs even when menu is open
+        self.perform(#selector(performFadeOut), with: nil, afterDelay: 0, inModes: [.common])
+    }
+
+    @objc private func performFadeOut() {
+        NSAnimationContext.runAnimationGroup({ [weak self] context in
+            guard let self = self else { return }
+            context.duration = self.settings.fadeDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            context.allowsImplicitAnimation = true
+
+            for window in self.overlayWindows {
                 window.animator().alphaValue = 0.0
             }
         }, completionHandler: { [weak self] in
+            guard let self = self else { return }
             print("Fade out complete")
-            self?.isBreakActive = false
-            self?.breakStartTime = nil
+            self.isBreakActive = false
+            self.breakStartTime = nil
             // Update menu to hide Dismiss Break option
-            self?.refreshMenuItems()
+            self.refreshMenuItems()
             // Schedule next break after the interval
-            if self?.settings.isEnabled == true {
-                self?.startIntervalTimer()
+            if self.settings.isEnabled == true {
+                self.startIntervalTimer()
             }
         })
     }

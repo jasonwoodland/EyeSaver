@@ -15,7 +15,8 @@
       "Read(//private/var/tmp/WiFiDiagnostics_2025-09-10_10.18.32.511_macOS_MacBookPro18,3_25A5351b/**)",
       "Read(//var/tmp/WiFiDiagnostics_2025-09-10_10.18.32.511_macOS_MacBookPro18,3_25A5351b/**)",
       "Bash(ssh:*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(open /Users/jason/Library/Developer/Xcode/DerivedData/EyeSaver-gttusnejcimqtcdmahfshixbqwep/Build/Products/Debug/EyeSaver.app)"
     ],
     "deny": [],
     "ask": []
