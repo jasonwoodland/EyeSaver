@@ -14,7 +14,8 @@
       "Bash(netstat:*)",
       "Read(//private/var/tmp/WiFiDiagnostics_2025-09-10_10.18.32.511_macOS_MacBookPro18,3_25A5351b/**)",
       "Read(//var/tmp/WiFiDiagnostics_2025-09-10_10.18.32.511_macOS_MacBookPro18,3_25A5351b/**)",
-      "Bash(ssh:*)"
+      "Bash(ssh:*)",
+      "WebSearch"
     ],
     "deny": [],
     "ask": []

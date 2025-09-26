@@ -10,7 +10,7 @@ import SwiftUI
 import CoreGraphics
 import Combine
 
-class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecordingMonitorDelegate {
 
     private var overlayWindows: [NSWindow] = []
     private var fadeOutTimer: Timer?
@@ -20,6 +20,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var settings: EyeSaverSettings!
     private var cancellables = Set<AnyCancellable>()
     private var preferencesWindow: NSWindow?
+    private var intervalStartTime: Date?
+    private var countdownUpdateTimer: Timer?
+    private var countdownMenuItem: NSMenuItem?
+    private var isBreakActive = false
+    private var breakStartTime: Date?
+    private var statusItemMenu: NSMenu?
     
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Activation policy will be set after settings are loaded
@@ -98,9 +104,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func updateStatusItemIcon() {
         if let button = statusItem?.button {
-            let iconName = settings.isEnabled ? "eyes" : "eyes.inverse"
+            let isEffectivelyEnabled = settings.isEnabled && !(settings.disableWhileScreenSharing && settings.isScreenSharingActive())
+            let iconName = isEffectivelyEnabled ? "eyes" : "eyes.inverse"
             button.image = NSImage(systemSymbolName: iconName, accessibilityDescription: "EyeSaver")
             button.image?.isTemplate = true
+        }
+    }
+
+    @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
+        let event = NSApp.currentEvent
+        if event?.type == .rightMouseDown {
+            // Right-click: toggle enabled
+            settings.isEnabled.toggle()
+        } else {
+            // Left-click: end break if active, otherwise show menu
+            if isBreakActive {
+                endBreakImmediately()
+            } else {
+                guard let menu = statusItemMenu else { return }
+                menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height), in: sender)
+            }
         }
     }
 
@@ -112,12 +135,28 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func updateActivationPolicy() {
+        let wasVisible = preferencesWindow?.isVisible ?? false
+
         if settings.showInMenubar {
             // Show in menubar: use accessory mode (doesn't appear in Cmd+Tab or Dock)
             NSApp.setActivationPolicy(.accessory)
         } else {
             // Hidden from menubar: use prohibited mode (appears in Cmd+Tab but not Dock)
             NSApp.setActivationPolicy(.prohibited)
+        }
+
+        // If preferences window was visible, ensure it stays accessible
+        if wasVisible, let prefsWindow = preferencesWindow {
+            DispatchQueue.main.async {
+                prefsWindow.level = .floating // Temporarily raise window level
+                prefsWindow.makeKeyAndOrderFront(nil)
+                NSApp.activate(ignoringOtherApps: true)
+
+                // Reset to normal level after a moment
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    prefsWindow.level = .normal
+                }
+            }
         }
     }
 
@@ -130,6 +169,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         enabledItem.target = self
         enabledItem.state = settings.isEnabled ? .on : .off
         menu.addItem(enabledItem)
+
+        // Countdown display with fixed-width font
+        countdownMenuItem = NSMenuItem(title: "Next break in: --:--", action: nil, keyEquivalent: "")
+        countdownMenuItem?.isEnabled = false
+
+        // Use monospaced font for fixed width
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        ]
+        let attributedTitle = NSAttributedString(string: "Next break in: --:--", attributes: attributes)
+        countdownMenuItem?.attributedTitle = attributedTitle
+
+        menu.addItem(countdownMenuItem!)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -145,11 +197,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         quitItem.target = self
         menu.addItem(quitItem)
 
-        statusItem?.menu = menu
+        // Handle clicks manually instead of attaching menu
+        if let button = statusItem?.button {
+            button.sendAction(on: [.leftMouseDown, .rightMouseDown])
+            button.action = #selector(statusItemClicked(_:))
+            button.target = self
+        }
+
+        // Store menu for manual display
+        self.statusItemMenu = menu
     }
 
     private func refreshMenuItems() {
-        guard let menu = statusItem?.menu else { return }
+        guard let menu = statusItemMenu else { return }
 
         // Update the enabled menu item state
         for item in menu.items {
@@ -161,6 +221,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Update the icon
         updateStatusItemIcon()
+
+        // Update countdown display
+        updateCountdown()
     }
 
     @objc private func showPreferences() {
@@ -216,6 +279,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self?.startIntervalTimer()
                 } else {
                     self?.stopIntervalTimer()
+                    // End any active break immediately
+                    if self?.isBreakActive == true {
+                        self?.endBreakImmediately()
+                    }
                 }
 
                 // Update menubar item state and icon when setting changes
@@ -245,6 +312,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     self?.hideStatusItem()
                 }
                 self?.updateActivationPolicy()
+
+            }
+            .store(in: &cancellables)
+
+        settings.$isScreenRecording
+            .sink { [weak self] _ in
+                // Update UI when screen recording state changes
+                DispatchQueue.main.async {
+                    self?.refreshMenuItems()
+                }
             }
             .store(in: &cancellables)
     }
@@ -292,12 +369,26 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - NSMenuDelegate
 
+    func menuWillOpen(_ menu: NSMenu) {
+        // Start updating countdown while menu is open
+        countdownUpdateTimer?.invalidate()
+        countdownUpdateTimer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.updateCountdown()
+        }
+        RunLoop.main.add(countdownUpdateTimer!, forMode: .common)
+        updateCountdown() // Update immediately
+    }
+
     func menuDidClose(_ menu: NSMenu) {
         print("EyeSaver: Menu closed, ending opacity preview")
         NotificationCenter.default.post(name: .menuDidClose, object: nil)
         if isPreviewingOpacity {
             endOpacityPreview()
         }
+
+        // Stop countdown updates when menu closes
+        countdownUpdateTimer?.invalidate()
+        countdownUpdateTimer = nil
     }
 
     private func stopIntervalTimer() {
@@ -317,8 +408,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func startIntervalTimer() {
         print("EyeSaver: Starting interval timer")
+        intervalStartTime = Date()
         intervalTimer = Timer.scheduledTimer(withTimeInterval: settings.intervalBetweenShows, repeats: true) { [weak self] _ in
             self?.showOverlays()
+            self?.intervalStartTime = Date() // Reset start time for next interval
         }
     }
 
@@ -332,12 +425,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         print("EyeSaver: Showing overlays")
+        isBreakActive = true
+        breakStartTime = Date()
         fadeInOverlays()
 
         fadeOutTimer?.invalidate()
         fadeOutTimer = Timer.scheduledTimer(withTimeInterval: settings.displayDuration, repeats: false) { [weak self] _ in
             self?.fadeOutOverlays()
         }
+
     }
     
     private func fadeInOverlays() {
@@ -368,8 +464,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             for window in overlayWindows {
                 window.animator().alphaValue = 0.0
             }
-        }, completionHandler: {
+        }, completionHandler: { [weak self] in
             print("Fade out complete")
+            self?.isBreakActive = false
+            self?.breakStartTime = nil
+            // Restart timer for next interval
+            self?.intervalStartTime = Date()
         })
     }
     
@@ -409,6 +509,90 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func screenDidUnlock() {
         print("EyeSaver: Screen unlocked - resetting timer")
         restartTimer()
+    }
+
+
+    private func updateCountdown() {
+        let isEffectivelyEnabled = settings.isEnabled && !(settings.disableWhileScreenSharing && settings.isScreenSharingActive())
+
+        guard isEffectivelyEnabled else {
+            if settings.isEnabled && settings.disableWhileScreenSharing && settings.isScreenSharingActive() {
+                updateCountdownTitle("Disabled while screen sharing")
+            } else {
+                updateCountdownTitle("Next break in: --:--")
+            }
+            return
+        }
+
+        if isBreakActive, let breakStart = breakStartTime {
+            // Show break countdown
+            let elapsed = Date().timeIntervalSince(breakStart)
+            let remaining = max(0, settings.displayDuration - elapsed)
+            let minutes = Int(remaining) / 60
+            let seconds = Int(remaining) % 60
+            updateCountdownTitle(String(format: "Break ends in: %02d:%02d", minutes, seconds))
+        } else if let startTime = intervalStartTime {
+            // Show interval countdown
+            let elapsed = Date().timeIntervalSince(startTime)
+            let remaining = max(0, settings.intervalBetweenShows - elapsed)
+            let minutes = Int(remaining) / 60
+            let seconds = Int(remaining) % 60
+            updateCountdownTitle(String(format: "Next break in: %02d:%02d", minutes, seconds))
+        } else {
+            updateCountdownTitle("Next break in: --:--")
+        }
+    }
+
+    private func updateCountdownTitle(_ title: String) {
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        ]
+        let attributedTitle = NSAttributedString(string: title, attributes: attributes)
+        countdownMenuItem?.attributedTitle = attributedTitle
+    }
+
+    private func endBreakImmediately() {
+        print("EyeSaver: Ending break immediately")
+        fadeOutTimer?.invalidate()
+        fadeOutTimer = nil
+        isBreakActive = false
+        breakStartTime = nil
+
+
+        // Immediately hide all overlays
+        for window in overlayWindows {
+            window.alphaValue = 0.0
+        }
+
+        // Reset interval timer
+        intervalStartTime = Date()
+    }
+
+
+    // MARK: - ScreenRecordingMonitorDelegate
+
+    func screenRecordingDidStart() {
+        print("EyeSaver: Screen recording started")
+
+        // Cancel current break if active
+        if isBreakActive {
+            print("EyeSaver: Canceling active break due to screen recording")
+            endBreakImmediately()
+        }
+
+        // Update UI to reflect screen recording state
+        DispatchQueue.main.async {
+            self.refreshMenuItems()
+        }
+    }
+
+    func screenRecordingDidStop() {
+        print("EyeSaver: Screen recording stopped")
+
+        // Update UI to reflect screen recording state
+        DispatchQueue.main.async {
+            self.refreshMenuItems()
+        }
     }
 }
 

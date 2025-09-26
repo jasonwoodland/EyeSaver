@@ -38,14 +38,21 @@ class EyeSaverSettings: ObservableObject {
     }
 
     @Published var disableWhileScreenSharing: Bool {
-        didSet { UserDefaults.standard.set(disableWhileScreenSharing, forKey: "EyeSaver.disableWhileScreenSharing") }
+        didSet {
+            UserDefaults.standard.set(disableWhileScreenSharing, forKey: "EyeSaver.disableWhileScreenSharing")
+            updateScreenRecordingMonitoring()
+        }
     }
 
     @Published var showInMenubar: Bool {
         didSet { UserDefaults.standard.set(showInMenubar, forKey: "EyeSaver.showInMenubar") }
     }
 
+    @Published private(set) var isScreenRecording = false
+
     weak var appDelegate: AppDelegate?
+    private var screenRecordingMonitor: ScreenRecordingMonitor?
+    private var cancellables = Set<AnyCancellable>()
 
     init() {
         self.isEnabled = UserDefaults.standard.object(forKey: "EyeSaver.enabled") as? Bool ?? true
@@ -67,6 +74,8 @@ class EyeSaverSettings: ObservableObject {
         self.disableWhileScreenSharing = UserDefaults.standard.object(forKey: "EyeSaver.disableWhileScreenSharing") as? Bool ?? false
 
         self.showInMenubar = UserDefaults.standard.object(forKey: "EyeSaver.showInMenubar") as? Bool ?? true
+
+        setupScreenRecordingMonitoring()
     }
 
     func startOpacityPreview() {
@@ -94,19 +103,37 @@ class EyeSaverSettings: ObservableObject {
     }
 
     func isScreenSharingActive() -> Bool {
-        let windowList = CGWindowListCopyWindowInfo(.excludeDesktopElements, kCGNullWindowID) as? [[String: Any]] ?? []
+        return isScreenRecording
+    }
 
-        for window in windowList {
-            if let owner = window[kCGWindowOwnerName as String] as? String,
-               let windowName = window[kCGWindowName as String] as? String {
-                if owner.contains("ScreenSearch") || owner.contains("screensharing") ||
-                   windowName.contains("Screen Sharing") || owner.contains("zoom") ||
-                   owner.contains("Zoom") || owner.contains("Discord") ||
-                   owner.contains("Skype") || owner.contains("Microsoft Teams") {
-                    return true
-                }
-            }
+    private func setupScreenRecordingMonitoring() {
+        guard disableWhileScreenSharing else { return }
+
+        let monitor = ScreenRecordingMonitor()
+        monitor.delegate = appDelegate
+        screenRecordingMonitor = monitor
+
+        // Subscribe to recording state changes
+        monitor.$isScreenRecording
+            .receive(on: DispatchQueue.main)
+            .assign(to: \.isScreenRecording, on: self)
+            .store(in: &cancellables)
+
+        monitor.startMonitoring()
+    }
+
+    private func updateScreenRecordingMonitoring() {
+        if disableWhileScreenSharing {
+            setupScreenRecordingMonitoring()
+        } else {
+            stopScreenRecordingMonitoring()
         }
-        return false
+    }
+
+    private func stopScreenRecordingMonitoring() {
+        screenRecordingMonitor?.stopMonitoring()
+        screenRecordingMonitor = nil
+        cancellables.removeAll()
+        isScreenRecording = false
     }
 }

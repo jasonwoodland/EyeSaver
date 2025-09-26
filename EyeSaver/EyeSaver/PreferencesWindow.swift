@@ -102,7 +102,7 @@ struct GeneralPreferencesView: View {
             Section {
                 Toggle("Enable", isOn: $settings.isEnabled)
             } footer: {
-                Text("Enable EyeSaver reminders.")
+                Text("Enable EyeSaver breaks.")
             }
 
             Section {
@@ -117,7 +117,7 @@ struct GeneralPreferencesView: View {
             } header: {
                 Text("Behaviour")
             } footer: {
-                Text("Automatically pause reminders during presentations and video calls.")
+                Text("Automatically pause breaks during presentations and video calls.")
             }
 
             Section {
@@ -141,13 +141,13 @@ struct SchedulePreferencesView: View {
         Form {
             Section {
                 HStack {
-                    Text("Interval Between Reminders")
+                    Text("Interval Between Breaks")
                     Spacer()
                     HStack {
                         Slider(
                             value: Binding(
                                 get: { settings.intervalBetweenShows / 60 },
-                                set: { settings.intervalBetweenShows = $0 * 60 }
+                                set: { settings.intervalBetweenShows = Double(Int($0.rounded())) * 60 }
                             ),
                             in: 5...60
                         )
@@ -177,7 +177,7 @@ struct SchedulePreferencesView: View {
             } header: {
                 Text("Timing")
             } footer: {
-                Text("Control how often reminders appear and how long they stay visible.")
+                Text("Control how often breaks start and how long they last.")
             }
 
             Section {
