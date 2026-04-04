@@ -56,13 +56,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
         print("Creating overlay windows")
         for screen in NSScreen.screens {
             let window = OverlayWindow(
-                contentRect: screen.frame,
+                contentRect: .zero,
                 styleMask: .borderless,
                 backing: .buffered,
-                defer: false,
-                screen: screen
+                defer: false
             )
-            
+
+            // Explicitly set the frame to match the screen's frame
+            window.setFrame(screen.frame, display: false)
+
             window.backgroundColor = NSColor(red: 0, green: 0, blue: 0, alpha: settings.overlayOpacity)
             window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.maximumWindow)))
             window.collectionBehavior = [
@@ -75,14 +77,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
             window.hasShadow = false
             window.alphaValue = 0.0
             window.orderFrontRegardless()
-            
+
             overlayWindows.append(window)
-            
+
             print("Created overlay window for screen: \(screen.localizedName)")
             print("  Screen frame: \(screen.frame)")
             print("  Window frame: \(window.frame)")
         }
-        
+
         print("Total overlay windows created: \(overlayWindows.count)")
     }
 
@@ -105,16 +107,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
     private func updateStatusItemIcon() {
         if let button = statusItem?.button {
             let iconName: String
+            var opacity: CGFloat = 1.0
+
             if isBreakActive {
                 // During break, show closed eye (rest your eyes)
                 iconName = "EyeClosed"
             } else {
-                // When not on break, show open eye if enabled, closed if disabled
-                let isEffectivelyEnabled = settings.isEnabled && !(settings.disableWhileScreenSharing && settings.isScreenSharingActive())
-                iconName = isEffectivelyEnabled ? "EyeOpen" : "EyeClosed"
+                // Always show open eye, but vary opacity
+                iconName = "EyeOpen"
+
+                if !settings.isEnabled {
+                    // Disabled: 50% opacity
+                    opacity = 0.3
+                } else if settings.disableWhileScreenSharing && settings.isScreenSharingActive() {
+                    // Screen sharing: 50% opacity
+                    opacity = 0.3
+                }
+                // Otherwise full opacity for enabled state
             }
-            button.image = NSImage(named: iconName)
-            button.image?.isTemplate = true
+
+            if let image = NSImage(named: iconName) {
+                button.image = image
+                button.image?.isTemplate = true
+                button.alphaValue = opacity
+            }
         }
     }
 
@@ -291,6 +307,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
 
     private func setupSettingsObservers() {
         settings.$isEnabled
+            .dropFirst() // Skip initial value - timer started explicitly in applicationDidFinishLaunching
             .sink { [weak self] isEnabled in
                 if isEnabled {
                     self?.startIntervalTimer()
@@ -316,6 +333,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
             .store(in: &cancellables)
 
         settings.$intervalBetweenShows
+            .dropFirst() // Skip initial value to avoid duplicate timer at startup
             .sink { [weak self] _ in
                 self?.restartTimer()
             }
@@ -354,6 +372,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
         isPreviewingOpacity = true
         print("EyeSaver: Starting opacity preview")
 
+        // Ensure we have overlay windows for all current screens
+        ensureOverlayWindowsForAllScreens()
+
         // Make sure windows are visible and on top
         for window in overlayWindows {
             window.orderFrontRegardless()
@@ -363,6 +384,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
 
         // Fade in the preview
         self.perform(#selector(performOpacityPreviewFadeIn), with: nil, afterDelay: 0, inModes: [.common])
+    }
+
+    private func ensureOverlayWindowsForAllScreens() {
+        let currentScreenCount = NSScreen.screens.count
+        if overlayWindows.count != currentScreenCount {
+            print("EyeSaver: Screen count mismatch (windows: \(overlayWindows.count), screens: \(currentScreenCount)), recreating overlay windows")
+            recreateOverlayWindows()
+        }
     }
 
     @objc private func performOpacityPreviewFadeIn() {
@@ -443,14 +472,23 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
     }
 
     private func restartTimer() {
-        if settings.isEnabled {
+        // Only restart if we're enabled and not in the middle of a break
+        if settings.isEnabled && !isBreakActive {
             stopIntervalTimer()
             startIntervalTimer()
         }
     }
 
     private func startIntervalTimer() {
-        print("EyeSaver: Starting interval timer")
+        // Always invalidate existing timer first to prevent orphaned timers
+        intervalTimer?.invalidate()
+        intervalTimer = nil
+
+        let nextBreakTime = Date().addingTimeInterval(settings.intervalBetweenShows)
+        let formatter = DateFormatter()
+        formatter.timeStyle = .medium
+        print("EyeSaver: Starting interval timer - next break at \(formatter.string(from: nextBreakTime)) (\(Int(settings.intervalBetweenShows)) seconds)")
+
         intervalStartTime = Date()
         intervalTimer = Timer(timeInterval: settings.intervalBetweenShows, repeats: false) { [weak self] _ in
             self?.showOverlays()
@@ -460,13 +498,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
     }
 
     private func showOverlays() {
+        // Timer has fired, clear reference so wake/unlock handlers can detect a dead timer
+        intervalTimer = nil
+
         guard settings.isEnabled && !isPreviewingOpacity else { return }
 
         // Check if we should disable during screen sharing
         if settings.disableWhileScreenSharing && settings.isScreenSharingActive() {
             print("EyeSaver: Skipping overlay - screen sharing is active")
+            // IMPORTANT: Reschedule the timer since we're skipping this break
+            startIntervalTimer()
             return
         }
+
+        // Ensure we have overlay windows for all current screens
+        ensureOverlayWindowsForAllScreens()
 
         print("EyeSaver: Showing overlays")
         isBreakActive = true
@@ -531,6 +577,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
         }, completionHandler: { [weak self] in
             guard let self = self else { return }
             print("Fade out complete")
+            self.fadeOutTimer = nil
             self.isBreakActive = false
             self.breakStartTime = nil
             // Update menu to hide Dismiss Break option
@@ -568,16 +615,131 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
             name: NSWorkspace.sessionDidBecomeActiveNotification,
             object: nil
         )
+
+        // Listen for display sleep/wake (covers closing lid, display timeout)
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self,
+            selector: #selector(screensDidWake),
+            name: NSWorkspace.screensDidWakeNotification,
+            object: nil
+        )
+
+        // Listen for display configuration changes (connect/disconnect)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(screenConfigurationDidChange),
+            name: NSApplication.didChangeScreenParametersNotification,
+            object: nil
+        )
+    }
+
+    @objc private func screenConfigurationDidChange() {
+        print("EyeSaver: Screen configuration changed")
+        // Dispatch async to let the system finish updating screen configuration
+        DispatchQueue.main.async { [weak self] in
+            self?.recreateOverlayWindows()
+        }
+    }
+
+    private func recreateOverlayWindows() {
+        // Determine visibility state based on app state, not window state
+        // (windows may be invalid if their screen was disconnected)
+        let wasVisible = isBreakActive || isPreviewingOpacity
+        let targetAlpha: CGFloat = wasVisible ? 1.0 : 0.0
+
+        print("EyeSaver: Recreating overlay windows (wasVisible: \(wasVisible), isBreakActive: \(isBreakActive), isPreviewingOpacity: \(isPreviewingOpacity))")
+
+        // Capture the old windows array and clear it immediately
+        let oldWindows = overlayWindows
+        overlayWindows.removeAll()
+
+        // Close old windows safely - they may be invalid if their screen was disconnected
+        for window in oldWindows {
+            // Use try/catch-like pattern by checking if window is still valid
+            if window.screen != nil || NSScreen.screens.contains(where: { $0.frame.intersects(window.frame) }) {
+                window.orderOut(nil)
+            }
+            // Don't call close() on potentially invalid windows - just let them deallocate
+        }
+
+        // Create new overlay windows for all current screens
+        for screen in NSScreen.screens {
+            let window = OverlayWindow(
+                contentRect: .zero,
+                styleMask: .borderless,
+                backing: .buffered,
+                defer: false
+            )
+
+            // Explicitly set the frame to match the screen's frame
+            window.setFrame(screen.frame, display: false)
+
+            window.backgroundColor = NSColor(red: 0, green: 0, blue: 0, alpha: settings.overlayOpacity)
+            window.level = NSWindow.Level(rawValue: Int(CGWindowLevelForKey(.maximumWindow)))
+            window.collectionBehavior = [
+                .canJoinAllSpaces,
+                .stationary,
+                .ignoresCycle
+            ]
+            window.ignoresMouseEvents = true
+            window.isOpaque = false
+            window.hasShadow = false
+            // Restore alpha value if break or preview was active
+            window.alphaValue = targetAlpha
+            window.orderFrontRegardless()
+
+            overlayWindows.append(window)
+
+            print("Created overlay window for screen: \(screen.localizedName)")
+            print("  Screen frame: \(screen.frame)")
+            print("  Window frame: \(window.frame)")
+        }
+
+        print("Total overlay windows recreated: \(overlayWindows.count)")
     }
 
     @objc private func systemDidWake() {
-        print("EyeSaver: System woke from sleep - resetting timer")
-        restartTimer()
+        print("EyeSaver: System woke from sleep")
+        handleSystemResume()
     }
 
     @objc private func screenDidUnlock() {
-        print("EyeSaver: Screen unlocked - resetting timer")
-        restartTimer()
+        print("EyeSaver: Screen unlocked")
+        handleSystemResume()
+    }
+
+    @objc private func screensDidWake() {
+        print("EyeSaver: Screens woke")
+        handleSystemResume()
+    }
+
+    private func handleSystemResume() {
+        guard settings.isEnabled else { return }
+
+        if isBreakActive {
+            // Break was active during sleep/lock — if fadeOutTimer already fired
+            // or is invalid, the animation completion handler likely didn't run,
+            // so force-end the break and restart the cycle
+            if fadeOutTimer == nil || !fadeOutTimer!.isValid {
+                print("EyeSaver: Break was active but fadeOutTimer is invalid, ending break")
+                fadeOutTimer = nil
+                isBreakActive = false
+                breakStartTime = nil
+                for window in overlayWindows {
+                    window.alphaValue = 0.0
+                }
+                refreshMenuItems()
+                startIntervalTimer()
+            }
+            // If fadeOutTimer is still valid, it will fire naturally
+            return
+        }
+
+        // Not in a break — restart interval timer if it's dead
+        if intervalTimer == nil || !intervalTimer!.isValid {
+            print("EyeSaver: Restarting timer after resume")
+            startIntervalTimer()
+        }
     }
 
 
@@ -586,7 +748,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
 
         guard isEffectivelyEnabled else {
             if settings.isEnabled && settings.disableWhileScreenSharing && settings.isScreenSharingActive() {
-                updateCountdownTitle("Disabled while screen sharing")
+                updateCountdownTitle("Paused (Screen Sharing)")
             } else {
                 updateCountdownTitle("Next break in: --:--")
             }
@@ -637,7 +799,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
         print("EyeSaver: Screen recording started")
 
         // Cancel current break if active
-        if isBreakActive {
+        if isBreakActive && settings.disableWhileScreenSharing {
             print("EyeSaver: Canceling active break due to screen recording")
             dismissBreakEarly()
         }
@@ -654,6 +816,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
         // Update UI to reflect screen recording state
         DispatchQueue.main.async {
             self.refreshMenuItems()
+        }
+
+        // Start timer if it's not running and we're enabled
+        if settings.isEnabled && intervalTimer == nil && !isBreakActive {
+            print("EyeSaver: Starting timer after screen recording stopped")
+            startIntervalTimer()
         }
     }
 }
