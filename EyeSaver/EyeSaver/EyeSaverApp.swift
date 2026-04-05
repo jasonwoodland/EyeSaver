@@ -26,6 +26,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
     private var isBreakActive = false
     private var breakStartTime: Date?
     private var statusItemMenu: NSMenu?
+    private var idleCheckTimer: Timer?
+    private var wasUserIdle = false
+    private let idleResetThreshold: TimeInterval = 60 // seconds of inactivity before considering user "away"
     
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Activation policy will be set after settings are loaded
@@ -49,6 +52,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
 
         if settings.isEnabled {
             startIntervalTimer()
+            startIdleMonitoring()
         }
     }
     
@@ -311,8 +315,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
             .sink { [weak self] isEnabled in
                 if isEnabled {
                     self?.startIntervalTimer()
+                    self?.startIdleMonitoring()
                 } else {
                     self?.stopIntervalTimer()
+                    self?.stopIdleMonitoring()
                     // End any active break immediately
                     if self?.isBreakActive == true {
                         self?.dismissBreakEarly()
@@ -502,6 +508,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
         intervalTimer = nil
 
         guard settings.isEnabled && !isPreviewingOpacity else { return }
+
+        // Skip break if user is idle — they aren't looking at the screen
+        if systemIdleTime() > idleResetThreshold {
+            print("EyeSaver: Skipping break - user is idle (\(Int(systemIdleTime()))s)")
+            startIntervalTimer()
+            return
+        }
 
         // Check if we should disable during screen sharing
         if settings.disableWhileScreenSharing && settings.isScreenSharingActive() {
@@ -743,6 +756,49 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
     }
 
 
+    // MARK: - Idle Detection
+
+    private func systemIdleTime() -> TimeInterval {
+        let mouseMoved = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .mouseMoved)
+        let keyDown = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .keyDown)
+        let leftMouseDown = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .leftMouseDown)
+        let rightMouseDown = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .rightMouseDown)
+        let scrollWheel = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: .scrollWheel)
+        return min(mouseMoved, keyDown, leftMouseDown, rightMouseDown, scrollWheel)
+    }
+
+    private func startIdleMonitoring() {
+        idleCheckTimer?.invalidate()
+        idleCheckTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            self?.checkIdleState()
+        }
+    }
+
+    private func stopIdleMonitoring() {
+        idleCheckTimer?.invalidate()
+        idleCheckTimer = nil
+        wasUserIdle = false
+    }
+
+    private func checkIdleState() {
+        let isCurrentlyIdle = systemIdleTime() > idleResetThreshold
+
+        if wasUserIdle && !isCurrentlyIdle {
+            // User just returned from being idle
+            print("EyeSaver: User returned from idle, resetting timer")
+            if settings.isEnabled {
+                if isBreakActive {
+                    // Break fired while user was away — dismiss it
+                    dismissBreakEarly()
+                } else {
+                    startIntervalTimer()
+                }
+            }
+        }
+
+        wasUserIdle = isCurrentlyIdle
+    }
+
     private func updateCountdown() {
         let isEffectivelyEnabled = settings.isEnabled && !(settings.disableWhileScreenSharing && settings.isScreenSharingActive())
 
@@ -752,6 +808,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
             } else {
                 updateCountdownTitle("Next break in: --:--")
             }
+            return
+        }
+
+        if systemIdleTime() > idleResetThreshold {
+            updateCountdownTitle("Idle")
             return
         }
 
