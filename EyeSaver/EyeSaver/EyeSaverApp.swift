@@ -10,7 +10,29 @@ import SwiftUI
 import CoreGraphics
 import Combine
 
-class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecordingMonitorDelegate {
+enum PauseReason: Hashable {
+    case idle
+    case screenSharing
+    case mediaPlaying(processName: String)
+
+    var displayText: String {
+        switch self {
+        case .idle: return "idle"
+        case .screenSharing: return "Screen Sharing"
+        case .mediaPlaying(let name): return name
+        }
+    }
+
+    var sortOrder: Int {
+        switch self {
+        case .screenSharing: return 0
+        case .mediaPlaying: return 1
+        case .idle: return 2
+        }
+    }
+}
+
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybackMonitorDelegate {
 
     private var overlayWindows: [NSWindow] = []
     private var fadeOutTimer: Timer?
@@ -27,8 +49,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
     private var breakStartTime: Date?
     private var statusItemMenu: NSMenu?
     private var idleCheckTimer: Timer?
-    private var wasUserIdle = false
-    private let idleResetThreshold: TimeInterval = 60 // seconds of inactivity before considering user "away"
+    private var pauseReasons: Set<PauseReason> = []
+    private var remainingTimeWhenPaused: TimeInterval?
+    private var isPaused: Bool { !pauseReasons.isEmpty }
     
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Activation policy will be set after settings are loaded
@@ -121,13 +144,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
                 iconName = "EyeOpen"
 
                 if !settings.isEnabled {
-                    // Disabled: 50% opacity
                     opacity = 0.3
-                } else if settings.disableWhileScreenSharing && settings.isScreenSharingActive() {
-                    // Screen sharing: 50% opacity
+                } else if isPaused {
                     opacity = 0.3
                 }
-                // Otherwise full opacity for enabled state
             }
 
             if let image = NSImage(named: iconName) {
@@ -357,11 +377,34 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
             }
             .store(in: &cancellables)
 
-        settings.$isScreenRecording
-            .sink { [weak self] _ in
-                // Update UI when screen recording state changes
-                DispatchQueue.main.async {
-                    self?.refreshMenuItems()
+        // All monitor state and toggle changes go through syncMonitorPauseState()
+        #if ENABLE_SCREEN_SHARING
+        settings.$isScreenRecording.dropFirst()
+            .sink { [weak self] _ in self?.syncMonitorPauseState() }
+            .store(in: &cancellables)
+        #endif
+
+        settings.$isMediaPlaying.dropFirst()
+            .sink { [weak self] _ in self?.syncMonitorPauseState() }
+            .store(in: &cancellables)
+
+        #if ENABLE_SCREEN_SHARING
+        settings.$disableWhileScreenSharing.dropFirst()
+            .sink { [weak self] _ in self?.syncMonitorPauseState() }
+            .store(in: &cancellables)
+        #endif
+
+        settings.$disableWhileMediaPlaying.dropFirst()
+            .sink { [weak self] _ in self?.syncMonitorPauseState() }
+            .store(in: &cancellables)
+
+        settings.$idleTimeout
+            .dropFirst()
+            .sink { [weak self] newValue in
+                guard let self = self, self.settings.isEnabled else { return }
+                if newValue == 0 {
+                    self.pauseReasons.remove(.idle)
+                    self.evaluatePauseState()
                 }
             }
             .store(in: &cancellables)
@@ -475,6 +518,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
         fadeOutTimer?.invalidate()
         fadeOutTimer = nil
         isPreviewingOpacity = false
+        remainingTimeWhenPaused = nil
+        pauseReasons.removeAll()
     }
 
     private func restartTimer() {
@@ -489,6 +534,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
         // Always invalidate existing timer first to prevent orphaned timers
         intervalTimer?.invalidate()
         intervalTimer = nil
+        remainingTimeWhenPaused = nil
 
         let nextBreakTime = Date().addingTimeInterval(settings.intervalBetweenShows)
         let formatter = DateFormatter()
@@ -501,28 +547,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
         }
         // Add timer to run loop with .common mode so it fires even when menu is open
         RunLoop.main.add(intervalTimer!, forMode: .common)
+
+        // Check if we should immediately pause (e.g. user is idle or media playing)
+        evaluatePauseState()
     }
 
     private func showOverlays() {
         // Timer has fired, clear reference so wake/unlock handlers can detect a dead timer
         intervalTimer = nil
+        remainingTimeWhenPaused = nil
 
-        guard settings.isEnabled && !isPreviewingOpacity else { return }
-
-        // Skip break if user is idle — they aren't looking at the screen
-        if systemIdleTime() > idleResetThreshold {
-            print("EyeSaver: Skipping break - user is idle (\(Int(systemIdleTime()))s)")
-            startIntervalTimer()
-            return
-        }
-
-        // Check if we should disable during screen sharing
-        if settings.disableWhileScreenSharing && settings.isScreenSharingActive() {
-            print("EyeSaver: Skipping overlay - screen sharing is active")
-            // IMPORTANT: Reschedule the timer since we're skipping this break
-            startIntervalTimer()
-            return
-        }
+        guard settings.isEnabled && !isPreviewingOpacity && !isPaused else { return }
 
         // Ensure we have overlay windows for all current screens
         ensureOverlayWindowsForAllScreens()
@@ -596,7 +631,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
             // Update menu to hide Dismiss Break option
             self.refreshMenuItems()
             // Schedule next break after the interval
-            if self.settings.isEnabled == true {
+            if self.settings.isEnabled {
                 self.startIntervalTimer()
             }
         })
@@ -733,7 +768,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
             // Break was active during sleep/lock — if fadeOutTimer already fired
             // or is invalid, the animation completion handler likely didn't run,
             // so force-end the break and restart the cycle
-            if fadeOutTimer == nil || !fadeOutTimer!.isValid {
+            if fadeOutTimer == nil || !fadeOutTimer!.isValid || fadeOutTimer!.fireDate <= Date() {
                 print("EyeSaver: Break was active but fadeOutTimer is invalid, ending break")
                 fadeOutTimer = nil
                 isBreakActive = false
@@ -748,8 +783,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
             return
         }
 
-        // Not in a break — restart interval timer if it's dead
-        if intervalTimer == nil || !intervalTimer!.isValid {
+        // Not in a break — if timer was paused, evaluatePauseState will handle resume.
+        // If timer is dead or overdue, restart it.
+        if remainingTimeWhenPaused != nil {
+            // Timer was paused before sleep — evaluatePauseState will resume if appropriate
+            evaluatePauseState()
+        } else if intervalTimer == nil || !intervalTimer!.isValid || intervalTimer!.fireDate <= Date() {
             print("EyeSaver: Restarting timer after resume")
             startIntervalTimer()
         }
@@ -769,69 +808,118 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
 
     private func startIdleMonitoring() {
         idleCheckTimer?.invalidate()
-        idleCheckTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+        idleCheckTimer = Timer(timeInterval: 5, repeats: true) { [weak self] _ in
             self?.checkIdleState()
         }
+        RunLoop.main.add(idleCheckTimer!, forMode: .common)
     }
 
     private func stopIdleMonitoring() {
         idleCheckTimer?.invalidate()
         idleCheckTimer = nil
-        wasUserIdle = false
+        if pauseReasons.contains(.idle) {
+            pauseReasons.remove(.idle)
+            evaluatePauseState()
+        }
     }
 
     private func checkIdleState() {
-        let isCurrentlyIdle = systemIdleTime() > idleResetThreshold
-
-        if wasUserIdle && !isCurrentlyIdle {
-            // User just returned from being idle
-            print("EyeSaver: User returned from idle, resetting timer")
-            if settings.isEnabled {
-                if isBreakActive {
-                    // Break fired while user was away — dismiss it
-                    dismissBreakEarly()
-                } else {
-                    startIntervalTimer()
-                }
-            }
-        }
-
-        wasUserIdle = isCurrentlyIdle
-    }
-
-    private func updateCountdown() {
-        let isEffectivelyEnabled = settings.isEnabled && !(settings.disableWhileScreenSharing && settings.isScreenSharingActive())
-
-        guard isEffectivelyEnabled else {
-            if settings.isEnabled && settings.disableWhileScreenSharing && settings.isScreenSharingActive() {
-                updateCountdownTitle("Paused (Screen Sharing)")
-            } else {
-                updateCountdownTitle("Next break in: --:--")
+        guard settings.idleTimeout > 0 else {
+            if pauseReasons.contains(.idle) {
+                pauseReasons.remove(.idle)
+                evaluatePauseState()
             }
             return
         }
 
-        if systemIdleTime() > idleResetThreshold {
-            updateCountdownTitle("Idle")
+        let isCurrentlyIdle = systemIdleTime() > settings.idleTimeout
+
+        if isCurrentlyIdle && !pauseReasons.contains(.idle) {
+            print("EyeSaver: User is idle (\(Int(systemIdleTime()))s)")
+            pauseReasons.insert(.idle)
+            evaluatePauseState()
+        } else if !isCurrentlyIdle && pauseReasons.contains(.idle) {
+            print("EyeSaver: User returned from idle")
+            pauseReasons.remove(.idle)
+            evaluatePauseState()
+        }
+    }
+
+    // MARK: - Pause/Resume
+
+    private func evaluatePauseState() {
+        if settings.isEnabled && !isBreakActive {
+            let wasPaused = remainingTimeWhenPaused != nil
+            let shouldBePaused = !pauseReasons.isEmpty
+
+            if !wasPaused && shouldBePaused {
+                pauseTimer()
+            } else if wasPaused && !shouldBePaused {
+                resumeTimer()
+            }
+        }
+
+        refreshMenuItems()
+    }
+
+    private func pauseTimer() {
+        guard let timer = intervalTimer, timer.isValid else { return }
+        remainingTimeWhenPaused = max(0, timer.fireDate.timeIntervalSinceNow)
+        intervalTimer?.invalidate()
+        intervalTimer = nil
+        let reason = pauseReasons.sorted(by: { $0.sortOrder < $1.sortOrder }).first
+        print("EyeSaver: Timer paused with \(Int(remainingTimeWhenPaused!))s remaining (\(reason?.displayText ?? "unknown"))")
+    }
+
+    private func resumeTimer() {
+        guard let remaining = remainingTimeWhenPaused else { return }
+        remainingTimeWhenPaused = nil
+
+        // Set intervalStartTime so countdown display calculates correctly
+        let elapsed = settings.intervalBetweenShows - remaining
+        intervalStartTime = Date().addingTimeInterval(-elapsed)
+
+        intervalTimer = Timer(timeInterval: remaining, repeats: false) { [weak self] _ in
+            self?.showOverlays()
+        }
+        RunLoop.main.add(intervalTimer!, forMode: .common)
+        print("EyeSaver: Timer resumed with \(Int(remaining))s remaining")
+    }
+
+    private func updateCountdown() {
+        guard settings.isEnabled else {
+            updateCountdownTitle("Next break in: --:--")
             return
         }
 
         if isBreakActive, let breakStart = breakStartTime {
-            // Show break countdown
             let elapsed = Date().timeIntervalSince(breakStart)
             let remaining = max(0, settings.displayDuration - elapsed)
             let minutes = Int(remaining) / 60
             let seconds = Int(remaining) % 60
             updateCountdownTitle(String(format: "Break ends in: %02d:%02d", minutes, seconds))
+            return
+        }
+
+        // Calculate remaining time (frozen when paused, live when running)
+        let remaining: TimeInterval
+        if let paused = remainingTimeWhenPaused {
+            remaining = paused
         } else if let startTime = intervalStartTime {
-            // Show interval countdown
-            let elapsed = Date().timeIntervalSince(startTime)
-            let remaining = max(0, settings.intervalBetweenShows - elapsed)
-            let minutes = Int(remaining) / 60
-            let seconds = Int(remaining) % 60
-            updateCountdownTitle(String(format: "Next break in: %02d:%02d", minutes, seconds))
+            remaining = max(0, settings.intervalBetweenShows - Date().timeIntervalSince(startTime))
         } else {
             updateCountdownTitle("Next break in: --:--")
+            return
+        }
+
+        let minutes = Int(remaining) / 60
+        let seconds = Int(remaining) % 60
+        let timeStr = String(format: "%02d:%02d", minutes, seconds)
+
+        if let reason = pauseReasons.sorted(by: { $0.sortOrder < $1.sortOrder }).first {
+            updateCountdownTitle("Next break in: \(timeStr) (Paused, \(reason.displayText))")
+        } else {
+            updateCountdownTitle("Next break in: \(timeStr)")
         }
     }
 
@@ -854,38 +942,54 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, ScreenRecord
     }
 
 
-    // MARK: - ScreenRecordingMonitorDelegate
+    // MARK: - Monitor Pause State
 
+    private func syncMonitorPauseState() {
+        #if ENABLE_SCREEN_SHARING
+        // Screen sharing
+        if settings.disableWhileScreenSharing && settings.isScreenRecording {
+            if !pauseReasons.contains(.screenSharing) {
+                pauseReasons.insert(.screenSharing)
+                if isBreakActive { dismissBreakEarly() }
+            }
+        } else {
+            pauseReasons.remove(.screenSharing)
+        }
+        #endif
+
+        // Media playback
+        let hadMedia = pauseReasons.contains(where: { if case .mediaPlaying = $0 { return true }; return false })
+        pauseReasons = pauseReasons.filter {
+            if case .mediaPlaying = $0 { return false }
+            return true
+        }
+        if settings.disableWhileMediaPlaying && settings.isMediaPlaying {
+            let name = settings.mediaPlaybackProcessName ?? "Media"
+            pauseReasons.insert(.mediaPlaying(processName: name))
+            if !hadMedia && isBreakActive { dismissBreakEarly() }
+        }
+
+        evaluatePauseState()
+    }
+
+    // MARK: - MediaPlaybackMonitorDelegate
+
+    func mediaPlaybackDidChange(isPlaying: Bool, processName: String?) {
+        print("EyeSaver: Media playback: \(isPlaying) (\(processName ?? "none"))")
+    }
+}
+
+#if ENABLE_SCREEN_SHARING
+extension AppDelegate: ScreenRecordingMonitorDelegate {
     func screenRecordingDidStart() {
         print("EyeSaver: Screen recording started")
-
-        // Cancel current break if active
-        if isBreakActive && settings.disableWhileScreenSharing {
-            print("EyeSaver: Canceling active break due to screen recording")
-            dismissBreakEarly()
-        }
-
-        // Update UI to reflect screen recording state
-        DispatchQueue.main.async {
-            self.refreshMenuItems()
-        }
     }
 
     func screenRecordingDidStop() {
         print("EyeSaver: Screen recording stopped")
-
-        // Update UI to reflect screen recording state
-        DispatchQueue.main.async {
-            self.refreshMenuItems()
-        }
-
-        // Start timer if it's not running and we're enabled
-        if settings.isEnabled && intervalTimer == nil && !isBreakActive {
-            print("EyeSaver: Starting timer after screen recording stopped")
-            startIntervalTimer()
-        }
     }
 }
+#endif
 
 class OverlayWindow: NSWindow {
     override var canBecomeKey: Bool { return false }

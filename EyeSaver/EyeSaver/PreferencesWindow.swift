@@ -113,11 +113,14 @@ struct GeneralPreferencesView: View {
             }
 
             Section {
+                #if ENABLE_SCREEN_SHARING
                 Toggle("Disable While Screen Sharing", isOn: $settings.disableWhileScreenSharing)
+                #endif
+                Toggle("Disable While Media Playing", isOn: $settings.disableWhileMediaPlaying)
             } header: {
                 Text("Behaviour")
             } footer: {
-                Text("Automatically pause breaks during presentations and video calls.")
+                Text("Automatically pause breaks during presentations, video calls, or media playback.")
             }
 
             Section {
@@ -160,7 +163,7 @@ struct SchedulePreferencesView: View {
                 }
 
                 HStack {
-                    Text("Display Duration")
+                    Text("Break Duration")
                     Spacer()
                     HStack {
                         Slider(
@@ -200,6 +203,35 @@ struct SchedulePreferencesView: View {
                 Text("Animation")
             } footer: {
                 Text("Adjust the fade animation timing for overlay transitions.")
+            }
+
+            Section {
+                HStack {
+                    Text("Idle Timeout")
+                    Spacer()
+                    HStack {
+                        Slider(
+                            value: Binding(
+                                get: { settings.idleTimeout / 60 },
+                                set: { settings.idleTimeout = Double(Int($0.rounded())) * 60 }
+                            ),
+                            in: 0...settings.intervalBetweenShows / 60
+                        )
+                        .controlSize(.small)
+                        Text(settings.idleTimeout == 0
+                             ? "Off"
+                             : "\(Int(settings.idleTimeout / 60)) min")
+                            .foregroundColor(.secondary)
+                            .frame(minWidth: 50, alignment: .trailing)
+                    }
+                    .frame(width: 250)
+                }
+            } header: {
+                Text("Idle")
+            } footer: {
+                Text(settings.idleTimeout == 0
+                     ? "Idle detection is disabled. The timer will not pause when you are away."
+                     : "Pause the break timer after \(Int(settings.idleTimeout / 60)) minutes of inactivity.")
             }
         }
         .formStyle(.grouped)

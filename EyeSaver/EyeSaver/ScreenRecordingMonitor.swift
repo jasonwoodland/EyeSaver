@@ -5,6 +5,8 @@
 //  Created by Jason Woodland on 26/9/2025.
 //
 
+#if ENABLE_SCREEN_SHARING
+
 import Cocoa
 import Combine
 
@@ -28,9 +30,10 @@ class ScreenRecordingMonitor: ObservableObject {
         print("EyeSaver: Starting screen recording monitoring")
 
         // Check every second for screen recording state changes
-        monitorTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        monitorTimer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             self?.checkScreenRecordingState()
         }
+        RunLoop.main.add(monitorTimer!, forMode: .common)
 
         // Initial check
         checkScreenRecordingState()
@@ -79,3 +82,5 @@ protocol ScreenRecordingMonitorDelegate: AnyObject {
 extension ScreenRecordingMonitor {
     // Simplified interface - no need for factory pattern since we're using a single reliable API
 }
+
+#endif
