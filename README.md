@@ -1,8 +1,8 @@
 <div align="center" id="toc">
     <img src="docs/logo.png" width="128" alt="EyeSaver logo" />
     <h1>EyeSaver</h1>
-    <img src="docs/preview.png" width="720" alt="EyeSaver preferences" />
     <p><i>A minimal macOS menu bar app that gently reminds you to rest your eyes.</i></p>
+    <img src="docs/preview.png" width="720" alt="EyeSaver preferences" />
 </div>
 
 ## About
