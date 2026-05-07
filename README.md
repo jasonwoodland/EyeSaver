@@ -2,7 +2,7 @@
     <img src="docs/logo.png" width="128" alt="EyeSaver logo" />
     <h1>EyeSaver</h1>
     <p><i>A minimal macOS menu bar app that gently reminds you to rest your eyes.</i></p>
-    <img src="docs/preview.png" width="720" alt="EyeSaver preferences" />
+    <img src="docs/preview.png" width="812" alt="EyeSaver preferences" />
 </div>
 
 ## About
