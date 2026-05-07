@@ -603,8 +603,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
     }
     
     private func fadeInOverlays() {
-        let pre = overlayWindows.map { $0.alphaValue }
-        log.notice("Starting fade in animation, windows=\(self.overlayWindows.count, privacy: .public), preFadeAlphas=\(pre, privacy: .public)")
+        log.debug("Starting fade in animation")
 
         for window in overlayWindows {
             window.orderFrontRegardless()
@@ -624,17 +623,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
             for window in self.overlayWindows {
                 window.animator().alphaValue = 1.0
             }
-        }) { [weak self] in
-            guard let self = self else { return }
-            let post = self.overlayWindows.map { $0.alphaValue }
-            let visible = self.overlayWindows.map { $0.isVisible }
-            log.notice("Fade in complete, postFadeAlphas=\(post, privacy: .public), isVisible=\(visible, privacy: .public)")
+        }) {
+            log.debug("Fade in complete")
         }
     }
 
     private func fadeOutOverlays() {
-        let pre = overlayWindows.map { $0.alphaValue }
-        log.notice("Starting fade out animation, preFadeAlphas=\(pre, privacy: .public)")
+        log.debug("Starting fade out animation")
 
         // Use perform selector to ensure animation runs even when menu is open
         self.perform(#selector(performFadeOut), with: nil, afterDelay: 0, inModes: [.common])
@@ -652,8 +647,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
             }
         }, completionHandler: { [weak self] in
             guard let self = self else { return }
-            let post = self.overlayWindows.map { $0.alphaValue }
-            log.notice("Break ended (fade out complete), postFadeAlphas=\(post, privacy: .public)")
+            log.notice("Break ended (fade out complete)")
             self.fadeOutTimer = nil
             self.isBreakActive = false
             self.breakStartTime = nil
