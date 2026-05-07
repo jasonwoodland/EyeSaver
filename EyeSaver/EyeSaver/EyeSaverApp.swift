@@ -370,6 +370,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
 
         settings.$intervalBetweenShows
             .dropFirst() // Skip initial value to avoid duplicate timer at startup
+            .removeDuplicates()
+            .debounce(for: .milliseconds(500), scheduler: RunLoop.main)
             .sink { [weak self] _ in
                 self?.restartTimer()
             }
