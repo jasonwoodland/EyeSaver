@@ -8,6 +8,9 @@
 import Cocoa
 import Combine
 import IOKit.pwr_mgt
+import os
+
+private let log = Logger(subsystem: "com.jasonwoodland.EyeSaver", category: "media")
 
 protocol MediaPlaybackMonitorDelegate: AnyObject {
     func mediaPlaybackDidChange(isPlaying: Bool, processName: String?)
@@ -25,7 +28,7 @@ class MediaPlaybackMonitor: ObservableObject {
     }
 
     func startMonitoring() {
-        print("EyeSaver: Starting media playback monitoring")
+        log.notice("Starting media playback monitoring")
         monitorTimer = Timer(timeInterval: 5.0, repeats: true) { [weak self] _ in
             self?.checkMediaPlaybackState()
         }
@@ -34,7 +37,7 @@ class MediaPlaybackMonitor: ObservableObject {
     }
 
     func stopMonitoring() {
-        print("EyeSaver: Stopping media playback monitoring")
+        log.notice("Stopping media playback monitoring")
         monitorTimer?.invalidate()
         monitorTimer = nil
     }
@@ -79,7 +82,7 @@ class MediaPlaybackMonitor: ObservableObject {
         activeProcessName = processName
 
         if isPlaying != wasPlaying {
-            print("EyeSaver: Media playback state changed to: \(isPlaying) (\(processName ?? "none"))")
+            log.notice("Media playback state changed: isPlaying=\(isPlaying, privacy: .public) process=\(processName ?? "none", privacy: .public)")
             delegate?.mediaPlaybackDidChange(isPlaying: isPlaying, processName: processName)
         }
     }

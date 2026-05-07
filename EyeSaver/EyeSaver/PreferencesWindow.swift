@@ -114,13 +114,13 @@ struct GeneralPreferencesView: View {
 
             Section {
                 #if ENABLE_SCREEN_SHARING
-                Toggle("Disable While Screen Sharing", isOn: $settings.disableWhileScreenSharing)
+                Toggle("Defer Breaks During Screen Sharing", isOn: $settings.disableWhileScreenSharing)
                 #endif
-                Toggle("Disable While Media Playing", isOn: $settings.disableWhileMediaPlaying)
+                Toggle("Defer Breaks During Media Playback", isOn: $settings.disableWhileMediaPlaying)
             } header: {
                 Text("Behaviour")
             } footer: {
-                Text("Automatically pause breaks during presentations, video calls, or media playback.")
+                Text("Postpone breaks during presentations, video calls, or media playback. The break fires the moment the activity stops.")
             }
 
             Section {

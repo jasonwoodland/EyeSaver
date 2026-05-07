@@ -8,6 +8,9 @@
 import SwiftUI
 import Combine
 import ServiceManagement
+import os
+
+private let log = Logger(subsystem: "com.jasonwoodland.EyeSaver", category: "settings")
 
 class EyeSaverSettings: ObservableObject {
     @Published var isEnabled: Bool {
@@ -135,13 +138,13 @@ class EyeSaverSettings: ObservableObject {
             do {
                 try SMAppService.mainApp.register()
             } catch {
-                print("Failed to enable launch at login: \(error)")
+                log.error("Failed to enable launch at login: \(String(describing: error), privacy: .public)")
             }
         } else {
             do {
                 try SMAppService.mainApp.unregister()
             } catch {
-                print("Failed to disable launch at login: \(error)")
+                log.error("Failed to disable launch at login: \(String(describing: error), privacy: .public)")
             }
         }
     }

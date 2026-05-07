@@ -9,6 +9,9 @@ import Cocoa
 import SwiftUI
 import CoreGraphics
 import Combine
+import os
+
+private let log = Logger(subsystem: "com.jasonwoodland.EyeSaver", category: "main")
 
 enum PauseReason: Hashable {
     case idle
@@ -52,6 +55,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
     private var pauseReasons: Set<PauseReason> = []
     private var remainingTimeWhenPaused: TimeInterval?
     private var isPaused: Bool { !pauseReasons.isEmpty }
+    private var pendingBreak: Bool = false
+
+    // Reasons that pause the timer (counting down stops): only idle.
+    // Media/screen-sharing instead suppress the break — timer keeps running,
+    // and if the timer fires while suppressed, the break is deferred and
+    // fired the moment those conditions clear.
+    private var hasIdleReason: Bool { pauseReasons.contains(.idle) }
+    private var hasSuppressBreakReason: Bool {
+        pauseReasons.contains(where: { if case .idle = $0 { return false }; return true })
+    }
     
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Activation policy will be set after settings are loaded
@@ -64,9 +77,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
         // Set activation policy based on menubar visibility
         updateActivationPolicy()
 
-        print("EyeSaver: Application launched")
-        print("EyeSaver: Interval between shows: \(settings.intervalBetweenShows) seconds")
-        print("EyeSaver: Display duration: \(settings.displayDuration) seconds")
+        log.notice("Application launched")
+        log.notice("Interval between shows: \(self.settings.intervalBetweenShows, privacy: .public)s, display duration: \(self.settings.displayDuration, privacy: .public)s, idle timeout: \(self.settings.idleTimeout, privacy: .public)s, disableWhileMediaPlaying: \(self.settings.disableWhileMediaPlaying, privacy: .public)")
 
         setupStatusItem()
         createOverlayWindows()
@@ -80,7 +92,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
     }
     
     private func createOverlayWindows() {
-        print("Creating overlay windows")
+        log.debug("Creating overlay windows")
         for screen in NSScreen.screens {
             let window = OverlayWindow(
                 contentRect: .zero,
@@ -107,12 +119,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
 
             overlayWindows.append(window)
 
-            print("Created overlay window for screen: \(screen.localizedName)")
-            print("  Screen frame: \(screen.frame)")
-            print("  Window frame: \(window.frame)")
+            log.debug("Created overlay window for screen: \(screen.localizedName, privacy: .public), screen frame: \(String(describing: screen.frame), privacy: .public), window frame: \(String(describing: window.frame), privacy: .public)")
         }
 
-        print("Total overlay windows created: \(overlayWindows.count)")
+        log.debug("Total overlay windows created: \(self.overlayWindows.count, privacy: .public)")
     }
 
     private func setupStatusItem() {
@@ -419,7 +429,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
 
     func startOpacityPreview() {
         isPreviewingOpacity = true
-        print("EyeSaver: Starting opacity preview")
+        log.debug("Starting opacity preview")
 
         // Ensure we have overlay windows for all current screens
         ensureOverlayWindowsForAllScreens()
@@ -438,7 +448,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
     private func ensureOverlayWindowsForAllScreens() {
         let currentScreenCount = NSScreen.screens.count
         if overlayWindows.count != currentScreenCount {
-            print("EyeSaver: Screen count mismatch (windows: \(overlayWindows.count), screens: \(currentScreenCount)), recreating overlay windows")
+            log.notice("Screen count mismatch (windows: \(self.overlayWindows.count, privacy: .public), screens: \(currentScreenCount, privacy: .public)), recreating overlay windows")
             recreateOverlayWindows()
         }
     }
@@ -453,17 +463,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
                 window.animator().alphaValue = 1.0
             }
         }, completionHandler: {
-            print("EyeSaver: Preview fade in completed")
+            log.debug("Preview fade in completed")
         })
     }
 
     func endOpacityPreview() {
         guard isPreviewingOpacity else {
-            print("EyeSaver: endOpacityPreview called but not previewing")
+            log.debug("endOpacityPreview called but not previewing")
             return
         }
 
-        print("EyeSaver: Actually ending opacity preview")
+        log.debug("Actually ending opacity preview")
         isPreviewingOpacity = false
 
         // Use perform selector to ensure animation runs even when menu is closing
@@ -477,11 +487,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
             context.timingFunction = CAMediaTimingFunction(name: .easeOut)
 
             for window in self.overlayWindows {
-                print("EyeSaver: Fading out window alpha from \(window.alphaValue) to 0.0")
+                log.debug("Fading out window alpha from \(window.alphaValue, privacy: .public) to 0.0")
                 window.animator().alphaValue = 0.0
             }
         }, completionHandler: {
-            print("EyeSaver: Fade out animation completed")
+            log.debug("Fade out animation completed")
         })
     }
 
@@ -498,7 +508,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
     }
 
     func menuDidClose(_ menu: NSMenu) {
-        print("EyeSaver: Menu closed, ending opacity preview")
+        log.debug("Menu closed, ending opacity preview")
         NotificationCenter.default.post(name: .menuDidClose, object: nil)
         if isPreviewingOpacity {
             endOpacityPreview()
@@ -520,6 +530,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
         isPreviewingOpacity = false
         remainingTimeWhenPaused = nil
         pauseReasons.removeAll()
+        pendingBreak = false
     }
 
     private func restartTimer() {
@@ -539,7 +550,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
         let nextBreakTime = Date().addingTimeInterval(settings.intervalBetweenShows)
         let formatter = DateFormatter()
         formatter.timeStyle = .medium
-        print("EyeSaver: Starting interval timer - next break at \(formatter.string(from: nextBreakTime)) (\(Int(settings.intervalBetweenShows)) seconds)")
+        log.notice("Starting interval timer - next break at \(formatter.string(from: nextBreakTime), privacy: .public) (\(Int(self.settings.intervalBetweenShows), privacy: .public)s)")
 
         intervalStartTime = Date()
         intervalTimer = Timer(timeInterval: settings.intervalBetweenShows, repeats: false) { [weak self] _ in
@@ -557,12 +568,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
         intervalTimer = nil
         remainingTimeWhenPaused = nil
 
-        guard settings.isEnabled && !isPreviewingOpacity && !isPaused else { return }
+        guard settings.isEnabled && !isPreviewingOpacity else { return }
+
+        // Defer the break if media/screen-sharing is active — fire it the moment that clears.
+        // Idle still defers via the same flag (resolved when user returns from idle).
+        if hasSuppressBreakReason || hasIdleReason {
+            let reason = pauseReasons.sorted(by: { $0.sortOrder < $1.sortOrder }).first
+            log.notice("Break deferred (\(reason?.displayText ?? "unknown", privacy: .public))")
+            pendingBreak = true
+            refreshMenuItems()
+            return
+        }
+
+        pendingBreak = false
 
         // Ensure we have overlay windows for all current screens
         ensureOverlayWindowsForAllScreens()
 
-        print("EyeSaver: Showing overlays")
+        log.notice("Showing overlays (break started)")
         isBreakActive = true
         breakStartTime = Date()
         fadeInOverlays()
@@ -580,7 +603,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
     }
     
     private func fadeInOverlays() {
-        print("Starting fade in animation")
+        let pre = overlayWindows.map { $0.alphaValue }
+        log.notice("Starting fade in animation, windows=\(self.overlayWindows.count, privacy: .public), preFadeAlphas=\(pre, privacy: .public)")
 
         for window in overlayWindows {
             window.orderFrontRegardless()
@@ -600,13 +624,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
             for window in self.overlayWindows {
                 window.animator().alphaValue = 1.0
             }
-        }) {
-            print("Fade in complete")
+        }) { [weak self] in
+            guard let self = self else { return }
+            let post = self.overlayWindows.map { $0.alphaValue }
+            let visible = self.overlayWindows.map { $0.isVisible }
+            log.notice("Fade in complete, postFadeAlphas=\(post, privacy: .public), isVisible=\(visible, privacy: .public)")
         }
     }
-    
+
     private func fadeOutOverlays() {
-        print("Starting fade out animation")
+        let pre = overlayWindows.map { $0.alphaValue }
+        log.notice("Starting fade out animation, preFadeAlphas=\(pre, privacy: .public)")
 
         // Use perform selector to ensure animation runs even when menu is open
         self.perform(#selector(performFadeOut), with: nil, afterDelay: 0, inModes: [.common])
@@ -624,7 +652,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
             }
         }, completionHandler: { [weak self] in
             guard let self = self else { return }
-            print("Fade out complete")
+            let post = self.overlayWindows.map { $0.alphaValue }
+            log.notice("Break ended (fade out complete), postFadeAlphas=\(post, privacy: .public)")
             self.fadeOutTimer = nil
             self.isBreakActive = false
             self.breakStartTime = nil
@@ -682,7 +711,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
     }
 
     @objc private func screenConfigurationDidChange() {
-        print("EyeSaver: Screen configuration changed")
+        log.notice("Screen configuration changed")
         // Dispatch async to let the system finish updating screen configuration
         DispatchQueue.main.async { [weak self] in
             self?.recreateOverlayWindows()
@@ -695,7 +724,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
         let wasVisible = isBreakActive || isPreviewingOpacity
         let targetAlpha: CGFloat = wasVisible ? 1.0 : 0.0
 
-        print("EyeSaver: Recreating overlay windows (wasVisible: \(wasVisible), isBreakActive: \(isBreakActive), isPreviewingOpacity: \(isPreviewingOpacity))")
+        log.notice("Recreating overlay windows (wasVisible: \(wasVisible, privacy: .public), isBreakActive: \(self.isBreakActive, privacy: .public), isPreviewingOpacity: \(self.isPreviewingOpacity, privacy: .public))")
 
         // Capture the old windows array and clear it immediately
         let oldWindows = overlayWindows
@@ -738,26 +767,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
 
             overlayWindows.append(window)
 
-            print("Created overlay window for screen: \(screen.localizedName)")
-            print("  Screen frame: \(screen.frame)")
-            print("  Window frame: \(window.frame)")
+            log.debug("Recreated overlay window for screen: \(screen.localizedName, privacy: .public), screen frame: \(String(describing: screen.frame), privacy: .public), window frame: \(String(describing: window.frame), privacy: .public)")
         }
 
-        print("Total overlay windows recreated: \(overlayWindows.count)")
+        log.debug("Total overlay windows recreated: \(self.overlayWindows.count, privacy: .public)")
     }
 
     @objc private func systemDidWake() {
-        print("EyeSaver: System woke from sleep")
+        log.notice("System woke from sleep")
         handleSystemResume()
     }
 
     @objc private func screenDidUnlock() {
-        print("EyeSaver: Screen unlocked")
+        log.notice("Screen unlocked")
         handleSystemResume()
     }
 
     @objc private func screensDidWake() {
-        print("EyeSaver: Screens woke")
+        log.notice("Screens woke")
         handleSystemResume()
     }
 
@@ -769,7 +796,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
             // or is invalid, the animation completion handler likely didn't run,
             // so force-end the break and restart the cycle
             if fadeOutTimer == nil || !fadeOutTimer!.isValid || fadeOutTimer!.fireDate <= Date() {
-                print("EyeSaver: Break was active but fadeOutTimer is invalid, ending break")
+                log.notice("Break was active but fadeOutTimer is invalid, ending break")
                 fadeOutTimer = nil
                 isBreakActive = false
                 breakStartTime = nil
@@ -789,7 +816,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
             // Timer was paused before sleep — evaluatePauseState will resume if appropriate
             evaluatePauseState()
         } else if intervalTimer == nil || !intervalTimer!.isValid || intervalTimer!.fireDate <= Date() {
-            print("EyeSaver: Restarting timer after resume")
+            log.notice("Restarting timer after resume")
             startIntervalTimer()
         }
     }
@@ -835,11 +862,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
         let isCurrentlyIdle = systemIdleTime() > settings.idleTimeout
 
         if isCurrentlyIdle && !pauseReasons.contains(.idle) {
-            print("EyeSaver: User is idle (\(Int(systemIdleTime()))s)")
+            log.notice("User is idle (\(Int(self.systemIdleTime()), privacy: .public)s, threshold \(Int(self.settings.idleTimeout), privacy: .public)s)")
             pauseReasons.insert(.idle)
             evaluatePauseState()
         } else if !isCurrentlyIdle && pauseReasons.contains(.idle) {
-            print("EyeSaver: User returned from idle")
+            log.notice("User returned from idle")
             pauseReasons.remove(.idle)
             evaluatePauseState()
         }
@@ -850,12 +877,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
     private func evaluatePauseState() {
         if settings.isEnabled && !isBreakActive {
             let wasPaused = remainingTimeWhenPaused != nil
-            let shouldBePaused = !pauseReasons.isEmpty
+            // Only idle pauses the timer. Media/screen-sharing keep the timer running
+            // and instead suppress break display via showOverlays().
+            let shouldBePaused = hasIdleReason
 
             if !wasPaused && shouldBePaused {
                 pauseTimer()
             } else if wasPaused && !shouldBePaused {
                 resumeTimer()
+            }
+
+            // If a break was deferred and all defer-conditions are now clear, fire it now.
+            if pendingBreak && !hasSuppressBreakReason && !hasIdleReason {
+                pendingBreak = false
+                log.notice("Firing deferred break (defer conditions cleared)")
+                showOverlays()
             }
         }
 
@@ -868,7 +904,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
         intervalTimer?.invalidate()
         intervalTimer = nil
         let reason = pauseReasons.sorted(by: { $0.sortOrder < $1.sortOrder }).first
-        print("EyeSaver: Timer paused with \(Int(remainingTimeWhenPaused!))s remaining (\(reason?.displayText ?? "unknown"))")
+        log.notice("Timer paused with \(Int(self.remainingTimeWhenPaused!), privacy: .public)s remaining (reason: \(reason?.displayText ?? "unknown", privacy: .public))")
     }
 
     private func resumeTimer() {
@@ -883,7 +919,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
             self?.showOverlays()
         }
         RunLoop.main.add(intervalTimer!, forMode: .common)
-        print("EyeSaver: Timer resumed with \(Int(remaining))s remaining")
+        log.notice("Timer resumed with \(Int(remaining), privacy: .public)s remaining")
     }
 
     private func updateCountdown() {
@@ -898,6 +934,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
             let minutes = Int(remaining) / 60
             let seconds = Int(remaining) % 60
             updateCountdownTitle(String(format: "Break ends in: %02d:%02d", minutes, seconds))
+            return
+        }
+
+        if pendingBreak {
+            let reason = pauseReasons.sorted(by: { $0.sortOrder < $1.sortOrder }).first
+            updateCountdownTitle("Break pending (\(reason?.displayText ?? "waiting"))")
             return
         }
 
@@ -932,7 +974,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
     }
 
     private func dismissBreakEarly() {
-        print("EyeSaver: Ending break via dismiss")
+        log.notice("Ending break via dismiss")
         // Cancel the scheduled fade out timer
         fadeOutTimer?.invalidate()
         fadeOutTimer = nil
@@ -975,18 +1017,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, MediaPlaybac
     // MARK: - MediaPlaybackMonitorDelegate
 
     func mediaPlaybackDidChange(isPlaying: Bool, processName: String?) {
-        print("EyeSaver: Media playback: \(isPlaying) (\(processName ?? "none"))")
+        log.notice("Media playback delegate: isPlaying=\(isPlaying, privacy: .public) process=\(processName ?? "none", privacy: .public)")
     }
 }
 
 #if ENABLE_SCREEN_SHARING
 extension AppDelegate: ScreenRecordingMonitorDelegate {
     func screenRecordingDidStart() {
-        print("EyeSaver: Screen recording started")
+        log.notice("Screen recording started")
     }
 
     func screenRecordingDidStop() {
-        print("EyeSaver: Screen recording stopped")
+        log.notice("Screen recording stopped")
     }
 }
 #endif

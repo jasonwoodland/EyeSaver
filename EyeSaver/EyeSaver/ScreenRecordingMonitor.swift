@@ -9,6 +9,9 @@
 
 import Cocoa
 import Combine
+import os
+
+private let log = Logger(subsystem: "com.jasonwoodland.EyeSaver", category: "screen")
 
 // MARK: - Private API Bridge
 // Using SkyLight/CGSInternal private API for screen recording detection
@@ -27,7 +30,7 @@ class ScreenRecordingMonitor: ObservableObject {
     }
 
     func startMonitoring() {
-        print("EyeSaver: Starting screen recording monitoring")
+        log.notice("Starting screen recording monitoring")
 
         // Check every second for screen recording state changes
         monitorTimer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -40,7 +43,7 @@ class ScreenRecordingMonitor: ObservableObject {
     }
 
     func stopMonitoring() {
-        print("EyeSaver: Stopping screen recording monitoring")
+        log.notice("Stopping screen recording monitoring")
         monitorTimer?.invalidate()
         monitorTimer = nil
     }
@@ -60,7 +63,7 @@ class ScreenRecordingMonitor: ObservableObject {
     private func updateRecordingState(isRecording: Bool) {
         guard isRecording != self.isScreenRecording else { return }
 
-        print("EyeSaver: Screen recording state changed to: \(isRecording)")
+        log.notice("Screen recording state changed to: \(isRecording, privacy: .public)")
 
         self.isScreenRecording = isRecording
 
